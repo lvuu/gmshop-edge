@@ -1,5 +1,9 @@
 import { activateEntitlementGrantStatements } from "#/features/entitlements/server/ledger";
-import { encryptDeliveryContent } from "#/features/fulfillment/secrets";
+import {
+	decryptDeliveryContent,
+	encryptDeliveryContent,
+} from "#/features/fulfillment/secrets";
+import { supplierServiceResultSchema } from "#/features/suppliers/schema";
 import { DomainError } from "#/lib/domain-error";
 import { decryptSecret } from "#/lib/secrets";
 import { loadRuntimeConfig } from "#/server/runtime-config";
@@ -7,7 +11,7 @@ import { loadRuntimeConfig } from "#/server/runtime-config";
 type DeliveryContext = {
 	id: string;
 	status: "pending" | "processing" | "awaiting_supply" | "delivered" | "failed";
-	delivery_type: "stock" | "download" | "automation";
+	delivery_type: "stock" | "download" | "automation" | "service";
 	content_encrypted: string | null;
 	error_code: string | null;
 	order_item_id: string;
@@ -57,6 +61,22 @@ export async function processDelivery(
 	if (!fulfillableOrderStatuses.has(delivery.order_status))
 		return failDelivery(db, delivery, "order_not_fulfillable", now);
 	let contentEncrypted = delivery.content_encrypted;
+	if (delivery.delivery_type === "service" && !contentEncrypted)
+		return failDelivery(db, delivery, "service_result_missing", now);
+	if (delivery.delivery_type === "service" && contentEncrypted) {
+		const runtime = await loadRuntimeConfig(db);
+		if (!runtime.commerceSecret)
+			throw new DomainError(
+				"delivery_secret_unavailable",
+				503,
+				"Delivery configuration unavailable",
+			);
+		supplierServiceResultSchema.parse(
+			JSON.parse(
+				await decryptDeliveryContent(contentEncrypted, runtime.commerceSecret),
+			),
+		);
+	}
 	if (delivery.delivery_type === "stock") {
 		const runtime = await loadRuntimeConfig(db);
 		if (!runtime.commerceSecret)

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { consumeEntitlementAccess } from "#/features/entitlements/server/ledger";
 import { decryptDeliveryContent } from "#/features/fulfillment/secrets";
 import { getStoreOrder } from "#/features/storefront/server/order-query";
+import { supplierServiceResultSchema } from "#/features/suppliers/schema";
 import { DomainError } from "#/lib/domain-error";
 import { clientIp } from "#/server/client-ip";
 import { loadRuntimeConfig } from "#/server/runtime-config";
@@ -28,6 +29,50 @@ export async function revealStoreDelivery(
 		{ orderNumber: input.orderNumber, email: input.email },
 		{ userId: input.userId, request: input.request },
 	);
+	const service = await db
+		.prepare(`SELECT dr.content_encrypted FROM delivery_records dr
+  JOIN shop_order_items oi ON oi.id = dr.order_item_id
+  WHERE dr.id = ? AND oi.order_id = ? AND dr.status = 'delivered'
+  AND dr.delivery_type = 'service' AND dr.content_encrypted IS NOT NULL`)
+		.bind(input.deliveryId, order.id)
+		.first<{ content_encrypted: string }>();
+	if (service) {
+		const runtime = await loadRuntimeConfig(db);
+		if (!runtime.commerceSecret)
+			throw new DomainError(
+				"delivery_secret_unavailable",
+				503,
+				"Delivery configuration unavailable",
+			);
+		const result = supplierServiceResultSchema.parse(
+			JSON.parse(
+				await decryptDeliveryContent(
+					service.content_encrypted,
+					runtime.commerceSecret,
+				),
+			),
+		);
+		await db
+			.prepare(`INSERT INTO audit_logs
+   (id, actor_user_id, action, target_type, target_id, request_id, ip_address, after, created_at)
+   VALUES (?, ?, ?, 'delivery', ?, ?, ?, ?, ?)`)
+			.bind(
+				crypto.randomUUID(),
+				input.actorUserId ?? null,
+				action === "copied"
+					? "delivery.content_copied"
+					: "delivery.content_viewed",
+				input.deliveryId,
+				input.request?.headers.get("x-request-id") ?? null,
+				clientIp(input.request),
+				JSON.stringify({ orderId: order.id }),
+				Date.now(),
+			)
+			.run();
+		return action === "copied"
+			? { recorded: true as const }
+			: { content: result.resultText, resultData: result.resultData };
+	}
 	const delivery = await db
 		.prepare(
 			`SELECT dr.content_encrypted, dr.delivery_type, ce.id AS entitlement_id

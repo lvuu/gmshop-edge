@@ -144,12 +144,42 @@ export const supplierCredentialsSchema = z.discriminatedUnion("provider", [
 	}),
 ]);
 
-export const supplierPurchaseResultSchema = z.discriminatedUnion("status", [
-	z.object({
+export const supplierServiceResultSchema = z
+	.object({
+		type: z.literal("service"),
+		resultText: z
+			.string()
+			.min(1)
+			.max(64_000)
+			.refine((value) => value.trim().length > 0),
+		resultData: z.record(z.string(), z.json()).optional(),
+	})
+	.strict()
+	.refine(
+		(value) =>
+			new TextEncoder().encode(JSON.stringify(value)).byteLength <= 256 * 1024,
+	);
+
+export const supplierFulfillmentSchema = z.discriminatedUnion("type", [
+	z
+		.object({
+			type: z.literal("stock"),
+			cards: z.array(z.string().min(1).max(64_000)).min(1).max(10_000),
+		})
+		.strict(),
+	supplierServiceResultSchema,
+]);
+
+export const supplierSuppliedResultSchema = z
+	.object({
 		status: z.literal("supplied"),
 		upstreamOrderId: z.string().min(1).max(512),
-		cards: z.array(z.string().min(1).max(64_000)).min(1).max(10_000),
-	}),
+		fulfillment: supplierFulfillmentSchema,
+	})
+	.strict();
+
+export const supplierPurchaseResultSchema = z.discriminatedUnion("status", [
+	supplierSuppliedResultSchema,
 	z.object({
 		status: z.literal("processing"),
 		upstreamOrderId: z.string().min(1).max(512),

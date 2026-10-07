@@ -2,6 +2,7 @@ import {
 	fingerprintInventorySecret,
 	maskInventorySecret,
 } from "#/features/catalog/server/inventory-secrets";
+import { encryptDeliveryContent } from "#/features/fulfillment/secrets";
 import {
 	OperationTaskAlreadyRunningError,
 	runTrackedTask,
@@ -11,7 +12,10 @@ import { encryptSecret } from "#/lib/secrets";
 import { loadRuntimeConfig } from "#/server/runtime-config";
 import { multiplyMinor } from "../money";
 import { providerRequestNumber } from "../providers/signatures";
-import type { SupplierPurchaseResult } from "../schema";
+import {
+	type SupplierPurchaseResult,
+	supplierSuppliedResultSchema,
+} from "../schema";
 import {
 	adapterForSupplierAccount,
 	type SupplierAccountRuntimeRow,
@@ -82,6 +86,7 @@ export async function completeSupplierOrderFromCallback(
 	supplierOrderId: string,
 	result: Extract<SupplierPurchaseResult, { status: "supplied" }>,
 ) {
+	result = supplierSuppliedResultSchema.parse(result);
 	const order = await loadOrder(db, supplierOrderId);
 	if (!order)
 		throw new DomainError(
@@ -365,9 +370,23 @@ async function fulfillSupplierOrder(
 	result: Extract<SupplierPurchaseResult, { status: "supplied" }>,
 	commerceSecret: string,
 ) {
-	const cards = [...new Set(result.cards.map((value) => value.trim()))].filter(
-		Boolean,
-	);
+	result = supplierSuppliedResultSchema.parse(result);
+	const delivery = await db
+		.prepare("SELECT delivery_type FROM delivery_records WHERE id = ?")
+		.bind(order.delivery_record_id)
+		.first<{ delivery_type: string }>();
+	if (delivery?.delivery_type !== result.fulfillment.type)
+		throw new DomainError(
+			"supplier_delivery_type_mismatch",
+			409,
+			"Supplier result does not match the delivery type",
+			{ retryable: false },
+		);
+	if (result.fulfillment.type === "service")
+		return fulfillServiceSupplierOrder(db, order, result, commerceSecret);
+	const cards = [
+		...new Set(result.fulfillment.cards.map((value) => value.trim())),
+	].filter(Boolean);
 	if (cards.length !== order.quantity)
 		throw new DomainError(
 			"supplier_delivery_quantity_mismatch",
@@ -448,6 +467,72 @@ async function fulfillSupplierOrder(
 	const results = await db.batch(statements);
 	const duplicate = Number(results[0]?.meta.changes ?? 0) !== 1;
 	return { id: order.id, state: "supplied", duplicate };
+}
+
+async function fulfillServiceSupplierOrder(
+	db: D1Database,
+	order: SupplierOrderContext,
+	result: Extract<SupplierPurchaseResult, { status: "supplied" }>,
+	commerceSecret: string,
+) {
+	const encrypted = await encryptDeliveryContent(
+		JSON.stringify(result.fulfillment),
+		commerceSecret,
+	);
+	const now = Date.now();
+	const results = await db.batch([
+		db
+			.prepare(`UPDATE supplier_orders SET state = 'supplied', upstream_order_id = ?,
+   supplied_at = ?, next_retry_at = NULL, last_error_code = NULL, updated_at = ?
+   WHERE id = ? AND state IN ('submitting', 'uncertain')
+   AND EXISTS (SELECT 1 FROM delivery_records dr JOIN shop_order_items oi ON oi.id = dr.order_item_id
+    JOIN shop_orders o ON o.id = oi.order_id WHERE dr.id = ?
+    AND dr.delivery_type = 'service' AND dr.status = 'awaiting_supply'
+    AND o.status IN ('paid', 'fulfilling'))`)
+			.bind(
+				result.upstreamOrderId,
+				now,
+				now,
+				order.id,
+				order.delivery_record_id,
+			),
+		db
+			.prepare(`UPDATE delivery_records SET status = 'pending', content_encrypted = ?,
+   content_key_version = 1, next_attempt_at = ?, error_code = NULL, updated_at = ?
+   WHERE id = ? AND delivery_type = 'service' AND status = 'awaiting_supply'
+   AND EXISTS (SELECT 1 FROM supplier_orders WHERE id = ? AND state = 'supplied')`)
+			.bind(encrypted, now, now, order.delivery_record_id, order.id),
+		db
+			.prepare(`INSERT INTO outbox_events
+   (id, event_type, aggregate_type, aggregate_id, idempotency_key, payload, status, attempt_count, created_at, updated_at)
+   SELECT ?, 'delivery.requested', 'delivery', ?, ?, ?, 'pending', 0, ?, ?
+   FROM delivery_records WHERE id = ? AND delivery_type = 'service' AND status = 'pending'
+   ON CONFLICT(idempotency_key) DO NOTHING`)
+			.bind(
+				crypto.randomUUID(),
+				order.delivery_record_id,
+				`supplier-delivery-requested:${order.delivery_record_id}`,
+				JSON.stringify({
+					deliveryId: order.delivery_record_id,
+					orderItemId: order.order_item_id,
+				}),
+				now,
+				now,
+				order.delivery_record_id,
+			),
+	]);
+	if (Number(results[0]?.meta.changes ?? 0) !== 1) {
+		const current = await loadOrder(db, order.id);
+		if (current?.state !== "supplied")
+			throw new DomainError(
+				"supplier_service_delivery_conflict",
+				409,
+				"Service order is not fulfillable",
+				{ retryable: false },
+			);
+		return { id: order.id, state: "supplied", duplicate: true };
+	}
+	return { id: order.id, state: "supplied", duplicate: false };
 }
 
 async function deterministicSupplierStockId(orderId: string, index: number) {

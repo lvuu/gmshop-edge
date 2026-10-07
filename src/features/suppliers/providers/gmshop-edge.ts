@@ -151,7 +151,7 @@ export class GmshopEdgeAdapter implements SupplierAdapter {
 			return {
 				status: "supplied",
 				upstreamOrderId: parsed.order_id,
-				cards: parsed.cards,
+				fulfillment: { type: "stock", cards: parsed.cards },
 			};
 		if (["cancelled", "failed", "refunded"].includes(parsed.status))
 			return {

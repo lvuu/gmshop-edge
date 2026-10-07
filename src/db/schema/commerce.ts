@@ -1454,7 +1454,7 @@ export const deliveryRecords = sqliteTable(
 			.notNull()
 			.references(() => shopOrderItems.id),
 		deliveryType: text("delivery_type", {
-			enum: ["stock", "download", "automation"],
+			enum: ["stock", "download", "automation", "service"],
 		}).notNull(),
 		requestKey: text("request_key"),
 		status: text("status", {
@@ -1484,7 +1484,7 @@ export const deliveryRecords = sqliteTable(
 		),
 		check(
 			"delivery_records_type_check",
-			sql`${table.deliveryType} IN ('stock', 'download', 'automation')`,
+			sql`${table.deliveryType} IN ('stock', 'download', 'automation', 'service')`,
 		),
 		check(
 			"delivery_records_attempt_count_check",

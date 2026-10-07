@@ -1,10 +1,16 @@
 import { Miniflare } from "miniflare";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { decryptDeliveryContent } from "#/features/fulfillment/secrets";
+import { processDelivery } from "#/features/fulfillment/server/process";
 import { completeFreeStoreOrder } from "#/features/shop-payments/server/service";
+import { revealStoreDelivery } from "#/features/storefront/server/delivery-reveal";
 import { signDujiaoNextRequest } from "#/features/suppliers/providers/signatures";
 import { createSupplierCredentialVault } from "#/features/suppliers/secrets";
 import { handleDujiaoSupplierCallback } from "#/features/suppliers/server/dujiao-callback";
-import { processSupplierOrder } from "#/features/suppliers/server/process";
+import {
+	completeSupplierOrderFromCallback,
+	processSupplierOrder,
+} from "#/features/suppliers/server/process";
 import {
 	createInitialRuntimeConfig,
 	runtimeConfigEntries,
@@ -29,6 +35,163 @@ describe("supplier fulfillment", { timeout: 30_000 }, () => {
 
 	afterEach(async () => miniflare.dispose());
 
+	it("delivers service results encrypted without stock and deduplicates completion", async () => {
+		await completeFreeStoreOrder(db, "order");
+		const row = await db
+			.prepare(
+				"SELECT id, delivery_record_id FROM supplier_orders WHERE order_id = 'order'",
+			)
+			.first<{ id: string; delivery_record_id: string }>();
+		if (!row) throw new Error("missing supplier order");
+		await db
+			.prepare(
+				"UPDATE delivery_records SET delivery_type = 'service' WHERE id = ?",
+			)
+			.bind(row.delivery_record_id)
+			.run();
+		await db
+			.prepare(
+				"UPDATE supplier_orders SET state = 'uncertain', selected_account_id = 'account', selected_credentials_revision = 1, provider_request_no = 'r' WHERE id = ?",
+			)
+			.bind(row.id)
+			.run();
+		const result = {
+			status: "supplied" as const,
+			upstreamOrderId: "D1",
+			fulfillment: {
+				type: "service" as const,
+				resultText: "Model: iPhone\nStatus: Clean",
+				resultData: { clean: true },
+			},
+		};
+		await expect(
+			completeSupplierOrderFromCallback(db, row.id, result),
+		).resolves.toMatchObject({ duplicate: false });
+		const stored = await db
+			.prepare("SELECT content_encrypted FROM delivery_records WHERE id = ?")
+			.bind(row.delivery_record_id)
+			.first<{ content_encrypted: string }>();
+		expect(stored?.content_encrypted).not.toContain("iPhone");
+		expect(
+			JSON.parse(
+				await decryptDeliveryContent(
+					stored?.content_encrypted ?? "",
+					runtime.commerceSecret ?? "",
+				),
+			),
+		).toEqual(result.fulfillment);
+		await expect(
+			completeSupplierOrderFromCallback(db, row.id, {
+				...result,
+				fulfillment: {
+					...result.fulfillment,
+					resultText: "late conflicting result",
+				},
+			}),
+		).resolves.toMatchObject({ duplicate: true });
+		expect(
+			await db.prepare("SELECT COUNT(*) AS n FROM stock_entries").first("n"),
+		).toBe(0);
+		expect(
+			await db
+				.prepare(
+					"SELECT COUNT(*) AS n FROM outbox_events WHERE event_type = 'delivery.requested'",
+				)
+				.first("n"),
+		).toBe(1);
+		await expect(
+			processDelivery(db, row.delivery_record_id),
+		).resolves.toMatchObject({ status: "delivered" });
+		await expect(
+			processDelivery(db, row.delivery_record_id),
+		).resolves.toMatchObject({ status: "delivered", duplicate: true });
+		expect(
+			await db
+				.prepare("SELECT status FROM shop_orders WHERE id = 'order'")
+				.first("status"),
+		).toBe("completed");
+		await db
+			.prepare(
+				"UPDATE shop_orders SET order_number = 'ORDER-001', contact_email = 'buyer@example.com', normalized_contact_email = 'buyer@example.com' WHERE id = 'order'",
+			)
+			.run();
+		await expect(
+			revealStoreDelivery(db, {
+				orderNumber: "ORDER-001",
+				deliveryId: row.delivery_record_id,
+				email: "wrong@example.com",
+			}),
+		).rejects.toThrow();
+		await expect(
+			revealStoreDelivery(db, {
+				orderNumber: "ORDER-001",
+				deliveryId: row.delivery_record_id,
+				email: "buyer@example.com",
+			}),
+		).resolves.toMatchObject({
+			content: result.fulfillment.resultText,
+			resultData: { clean: true },
+		});
+	});
+	it("rejects service results on stock deliveries before changing supply state", async () => {
+		await completeFreeStoreOrder(db, "order");
+		const row = await db
+			.prepare("SELECT id FROM supplier_orders WHERE order_id = 'order'")
+			.first<{ id: string }>();
+		if (!row) throw new Error("missing supplier order");
+		await db
+			.prepare("UPDATE supplier_orders SET state = 'uncertain' WHERE id = ?")
+			.bind(row.id)
+			.run();
+		await expect(
+			completeSupplierOrderFromCallback(db, row.id, {
+				status: "supplied",
+				upstreamOrderId: "D1",
+				fulfillment: { type: "service", resultText: "Done" },
+			}),
+		).rejects.toMatchObject({ code: "supplier_delivery_type_mismatch" });
+		expect(
+			await db
+				.prepare("SELECT state FROM supplier_orders WHERE id = ?")
+				.bind(row.id)
+				.first("state"),
+		).toBe("uncertain");
+	});
+	it("does not fulfill cancelled service orders", async () => {
+		await completeFreeStoreOrder(db, "order");
+		const row = await db
+			.prepare(
+				"SELECT id, delivery_record_id FROM supplier_orders WHERE order_id = 'order'",
+			)
+			.first<{ id: string; delivery_record_id: string }>();
+		if (!row) throw new Error("missing supplier order");
+		await db
+			.prepare(
+				"UPDATE delivery_records SET delivery_type = 'service' WHERE id = ?",
+			)
+			.bind(row.delivery_record_id)
+			.run();
+		await db
+			.prepare("UPDATE supplier_orders SET state = 'uncertain' WHERE id = ?")
+			.bind(row.id)
+			.run();
+		await db
+			.prepare("UPDATE shop_orders SET status = 'cancelled' WHERE id = 'order'")
+			.run();
+		await expect(
+			completeSupplierOrderFromCallback(db, row.id, {
+				status: "supplied",
+				upstreamOrderId: "D1",
+				fulfillment: { type: "service", resultText: "Done" },
+			}),
+		).rejects.toMatchObject({ code: "supplier_service_delivery_conflict" });
+		expect(
+			await db
+				.prepare("SELECT content_encrypted FROM delivery_records WHERE id = ?")
+				.bind(row.delivery_record_id)
+				.first("content_encrypted"),
+		).toBeNull();
+	});
 	it("enforces the three-table account grouping and credential revision constraints", async () => {
 		const tables = await db
 			.prepare(
