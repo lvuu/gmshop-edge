@@ -262,7 +262,7 @@ export const supplierAccounts = sqliteTable(
 	{
 		id: text("id").primaryKey(),
 		provider: text("provider", {
-			enum: ["acg", "dujiao_next", "gmshop_edge"],
+			enum: ["acg", "dujiao_next", "gmshop_edge", "dhru"],
 		}).notNull(),
 		baseUrl: text("base_url").notNull(),
 		normalizedApiOrigin: text("normalized_api_origin").notNull(),
@@ -316,7 +316,7 @@ export const supplierAccounts = sqliteTable(
 		),
 		check(
 			"supplier_accounts_provider_check",
-			sql`${table.provider} IN ('acg', 'dujiao_next', 'gmshop_edge')`,
+			sql`${table.provider} IN ('acg', 'dujiao_next', 'gmshop_edge', 'dhru')`,
 		),
 		check(
 			"supplier_accounts_currency_decimals_check",
@@ -357,7 +357,7 @@ export const supplierBindings = sqliteTable(
 			.notNull()
 			.references(() => productSellableItems.id),
 		provider: text("provider", {
-			enum: ["acg", "dujiao_next", "gmshop_edge"],
+			enum: ["acg", "dujiao_next", "gmshop_edge", "dhru"],
 		}).notNull(),
 		normalizedApiOrigin: text("normalized_api_origin").notNull(),
 		protocolVersion: text("protocol_version").notNull(),
@@ -402,7 +402,7 @@ export const supplierBindings = sqliteTable(
 		),
 		check(
 			"supplier_bindings_provider_check",
-			sql`${table.provider} IN ('acg', 'dujiao_next', 'gmshop_edge')`,
+			sql`${table.provider} IN ('acg', 'dujiao_next', 'gmshop_edge', 'dhru')`,
 		),
 		check(
 			"supplier_bindings_reference_cost_check",

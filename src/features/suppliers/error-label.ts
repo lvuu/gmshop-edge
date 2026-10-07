@@ -2,6 +2,7 @@ import { m } from "#/paraglide/messages";
 
 export function supplierErrorLabel(code: string) {
 	const labels: Record<string, () => string> = {
+		supplier_service_not_ready: m.supplier_error_service_not_ready,
 		supplier_sku_missing_once: m.supplier_error_sku_missing,
 		supplier_sku_deleted: m.supplier_error_sku_deleted,
 		supplier_accounts_exhausted: m.supplier_error_accounts_exhausted,

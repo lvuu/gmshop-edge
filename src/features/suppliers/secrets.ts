@@ -2,12 +2,14 @@ import { z } from "zod";
 import { decryptSecret, encryptSecret } from "#/lib/secrets";
 import {
 	acgCredentialsSchema,
+	dhruCredentialsSchema,
 	dujiaoNextCredentialsSchema,
 	gmshopEdgeCredentialsSchema,
 	type SupplierProvider,
 } from "./schema";
 
 const credentialValueSchema = z.union([
+	dhruCredentialsSchema,
 	acgCredentialsSchema,
 	dujiaoNextCredentialsSchema,
 	gmshopEdgeCredentialsSchema,
@@ -33,6 +35,7 @@ export function parseSupplierCredentials(
 	provider: SupplierProvider,
 	value: unknown,
 ): SupplierCredentials {
+	if (provider === "dhru") return dhruCredentialsSchema.parse(value);
 	if (provider === "acg") return acgCredentialsSchema.parse(value);
 	if (provider === "dujiao_next")
 		return dujiaoNextCredentialsSchema.parse(value);

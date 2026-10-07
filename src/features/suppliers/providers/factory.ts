@@ -1,11 +1,13 @@
 import {
 	acgCredentialsSchema,
+	dhruCredentialsSchema,
 	dujiaoNextCredentialsSchema,
 	gmshopEdgeCredentialsSchema,
 	type SupplierProvider,
 } from "../schema";
 import type { SupplierCredentials } from "../secrets";
 import { AcgAdapter } from "./acg";
+import { DhruAdapter } from "./dhru";
 import { DujiaoNextAdapter } from "./dujiao-next";
 import { GmshopEdgeAdapter } from "./gmshop-edge";
 import type { SupplierAdapter } from "./types";
@@ -18,6 +20,10 @@ export function createSupplierAdapter(input: {
 	currencyDecimals: number;
 	fetcher?: typeof fetch;
 }): SupplierAdapter {
+	if (input.provider === "dhru") {
+		const credentials = dhruCredentialsSchema.parse(input.credentials);
+		return new DhruAdapter({ ...input, apiToken: credentials.apiToken });
+	}
 	if (input.provider === "acg") {
 		const credentials = acgCredentialsSchema.parse(input.credentials);
 		return new AcgAdapter({

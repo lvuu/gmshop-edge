@@ -270,23 +270,22 @@ export function SupplierAccountsPage() {
 					fieldsClassName="grid space-y-0 gap-x-4 gap-y-3 sm:grid-cols-2"
 					modalClassName="sm:max-w-2xl"
 					onFinish={async (values) => {
-						const provider =
-							values.provider === "acg"
-								? "acg"
-								: values.provider === "gmshop_edge"
-									? "gmshop_edge"
-									: "dujiao_next";
+						const provider = supplierProviderSchema.parse(values.provider);
 						const credentials =
-							provider === "acg"
-								? values.apiId || values.appKey
-									? { apiId: values.apiId, appKey: values.appKey }
+							provider === "dhru"
+								? values.apiToken
+									? { apiToken: values.apiToken }
 									: undefined
-								: values.apiKey || values.apiSecret
-									? {
-											apiKey: values.apiKey,
-											apiSecret: values.apiSecret,
-										}
-									: undefined;
+								: provider === "acg"
+									? values.apiId || values.appKey
+										? { apiId: values.apiId, appKey: values.appKey }
+										: undefined
+									: values.apiKey || values.apiSecret
+										? {
+												apiKey: values.apiKey,
+												apiSecret: values.apiSecret,
+											}
+										: undefined;
 						await saveSupplierAccountFn({
 							data: {
 								id: account?.id,
@@ -438,6 +437,15 @@ function accountFormSchema(editing: boolean) {
 			},
 		},
 		{
+			name: "apiToken",
+			label: m.supplier_api_token(),
+			valueType: "password" as const,
+			tooltip: credentialTooltip,
+			hidden: (values: Record<string, unknown>) => values.provider !== "dhru",
+			required: !editing,
+			fieldProps: { autoComplete: "new-password", spellCheck: false },
+		},
+		{
 			name: "reserveBalanceMinor",
 			label: m.supplier_reserve_balance(),
 			required: true,
@@ -476,6 +484,7 @@ function accountValues(account: Account | null) {
 		baseUrl: account?.baseUrl ?? "",
 		currency: account?.currency ?? "CNY",
 		currencyDecimals: account?.currencyDecimals ?? 2,
+		apiToken: "",
 		apiId: "",
 		appKey: "",
 		apiKey: "",
