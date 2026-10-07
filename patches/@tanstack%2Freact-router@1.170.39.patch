@@ -1,0 +1,39 @@
+diff --git a/dist/cjs/Asset.cjs b/dist/cjs/Asset.cjs
+index 4e5f0e97c9da27d1c3b25913ccfaef98c9d2cb13..74c84aa254a528708b7fe04102d975e816c1b946 100644
+--- a/dist/cjs/Asset.cjs
++++ b/dist/cjs/Asset.cjs
+@@ -91,7 +91,7 @@ function Script({ attrs, children, preventScriptHoist }) {
+ 			for (const el of document.scripts) {
+ 				if (el.hasAttribute("src")) continue;
+ 				const sType = el.getAttribute("type") ?? "text/javascript";
+-				const sNonce = el.getAttribute("nonce") ?? void 0;
++				const sNonce = el.nonce || void 0;
+ 				if (el.textContent === children && sType === typeAttr && sNonce === nonceAttr) return;
+ 			}
+ 			const script = document.createElement("script");
+diff --git a/dist/esm/Asset.js b/dist/esm/Asset.js
+index bb376da79ee2812c03d437bf62f048f4173e64b7..55367decd52c54719103f31df3310e4622f482a5 100644
+--- a/dist/esm/Asset.js
++++ b/dist/esm/Asset.js
+@@ -89,7 +89,7 @@ function Script({ attrs, children, preventScriptHoist }) {
+ 			for (const el of document.scripts) {
+ 				if (el.hasAttribute("src")) continue;
+ 				const sType = el.getAttribute("type") ?? "text/javascript";
+-				const sNonce = el.getAttribute("nonce") ?? void 0;
++				const sNonce = el.nonce || void 0;
+ 				if (el.textContent === children && sType === typeAttr && sNonce === nonceAttr) return;
+ 			}
+ 			const script = document.createElement("script");
+diff --git a/src/Asset.tsx b/src/Asset.tsx
+index 04cbac906403ca55f9eb9419cce234994e7d6a4d..e42ae5ab80602b6add58ce1d3f838e6063e0722e 100644
+--- a/src/Asset.tsx
++++ b/src/Asset.tsx
+@@ -201,7 +201,7 @@ function Script({
+         }
+ 
+         const sType = el.getAttribute('type') ?? 'text/javascript'
+-        const sNonce = el.getAttribute('nonce') ?? undefined
++        const sNonce = el.nonce || undefined
+         if (
+           el.textContent === children &&
+           sType === typeAttr &&

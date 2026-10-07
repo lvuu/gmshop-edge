@@ -108,6 +108,9 @@
       },
     },
   },
+  "patchedDependencies": {
+    "@tanstack/react-router@1.170.39": "patches/@tanstack%2Freact-router@1.170.39.patch",
+  },
   "packages": {
     "@acemir/cssom": ["@acemir/cssom@0.9.31", "", {}, "sha512-ZnR3GSaH+/vJ0YlHau21FjfLYjMpYVIzTD8M8vIEQvIGxeOXyXdzCI140rrCY862p/C/BbzWsjc1dgnM9mkoTA=="],
 

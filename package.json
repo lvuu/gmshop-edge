@@ -179,5 +179,8 @@
     "vitest": "^5.0.2",
     "wrangler": "^4.141.0",
     "yaml": "^2.9.1"
+  },
+  "patchedDependencies": {
+    "@tanstack/react-router@1.170.39": "patches/@tanstack%2Freact-router@1.170.39.patch"
   }
 }

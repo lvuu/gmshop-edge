@@ -2,6 +2,7 @@ name: Deploy Cloudflare Workers
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -19,6 +20,8 @@ jobs:
     steps:
       - name: Check out main
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
