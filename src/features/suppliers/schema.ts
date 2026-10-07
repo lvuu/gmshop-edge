@@ -198,3 +198,72 @@ export const supplierPurchaseResultSchema = z.discriminatedUnion("status", [
 export type SupplierPurchaseResult = z.infer<
 	typeof supplierPurchaseResultSchema
 >;
+
+// An explicit service payload keeps stock callers from placing paid Dhru orders.
+// Dynamic keys retain the provider's exact casing. Routing fields belong to the
+// worker, never to customer input.
+const serviceInputKeySchema = z
+	.string()
+	.min(1)
+	.max(120)
+	.refine(
+		(key) =>
+			![
+				"reference_id",
+				"feedback_url",
+				"Quantity",
+				"__proto__",
+				"prototype",
+				"constructor",
+			].includes(key),
+	);
+const serviceInputValueSchema = z.union([
+	z.string().max(16_000),
+	z.number().finite(),
+	z.boolean(),
+	z.array(z.string().max(1_000)).max(100),
+]);
+
+const serviceOrderShapeSchema = z
+	.object({
+		productId: z.union([
+			z.number().int().positive(),
+			z.string().min(1).max(512),
+		]),
+		inputData: z.record(serviceInputKeySchema, serviceInputValueSchema),
+	})
+	.strict()
+	.refine(
+		(value) =>
+			Object.keys(value.inputData).length <= 100 &&
+			new TextEncoder().encode(JSON.stringify(value)).byteLength <= 64 * 1024,
+	);
+
+export const supplierServiceOrderInputSchema = z.preprocess(
+	(value, context) => {
+		// Zod omits __proto__ while constructing record output. Check the raw
+		// snapshot first so a routing/prototype key cannot disappear into {}.
+		if (value && typeof value === "object" && "inputData" in value) {
+			const data = value.inputData;
+			if (
+				data &&
+				typeof data === "object" &&
+				Object.keys(data).some(
+					(key) => !serviceInputKeySchema.safeParse(key).success,
+				)
+			) {
+				context.addIssue({
+					code: "custom",
+					message: "Invalid service input key",
+				});
+				return z.NEVER;
+			}
+		}
+		return value;
+	},
+	serviceOrderShapeSchema,
+);
+
+export type SupplierServiceOrderInput = z.infer<
+	typeof supplierServiceOrderInputSchema
+>;

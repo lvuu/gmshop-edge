@@ -92,3 +92,13 @@ Adapter 自动追加 API 路径。测试连接核对币种并精确转换余额�
 新增 0006 迁移扩展数据库约束，已有迁移不修改。测试覆盖空库、已有账号、
 绑定、引用行和索引。此阶段未开放服务商品导入或采购，卡密履约入口明确
 报错并停止，不向 Dhru 发送订单。需后续服务结果模型和字段映射完成后开放。
+
+## Service adapter follow-up / 服务适配后续
+
+Service submit/reconcile are now available with an explicit service snapshot.
+Catalog import and stock SKU lookup remain blocked. The earlier account-only
+section describes the registration commit. See [DHRU-SERVICE-INTEGRATION.md](DHRU-SERVICE-INTEGRATION.md)
+for the current boundary, remaining queue wiring and validation.
+
+服务提交与查询现支持显式 service 快照，目录与卡密 SKU 入口仍关闭。
+当前实现边界及未完成接线以 DHRU-SERVICE-INTEGRATION.md 为准。

@@ -1,4 +1,7 @@
-import type { SupplierPurchaseResult } from "../schema";
+import type {
+	SupplierPurchaseResult,
+	SupplierServiceOrderInput,
+} from "../schema";
 
 export type SupplierBalance = {
 	amountMinor: string;
@@ -39,6 +42,7 @@ export interface SupplierAdapter {
 		requestNo: string;
 		callbackUrl: string;
 		traceId: string;
+		service?: SupplierServiceOrderInput;
 	}): Promise<SupplierPurchaseResult>;
 	reconcileOrder(input: {
 		upstreamOrderId: string | null;
@@ -47,5 +51,6 @@ export interface SupplierAdapter {
 		requestNo: string;
 		callbackUrl: string;
 		traceId: string;
+		service?: SupplierServiceOrderInput;
 	}): Promise<SupplierPurchaseResult>;
 }

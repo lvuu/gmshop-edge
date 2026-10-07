@@ -57,6 +57,7 @@ export function providerRequestNumber(
 	supplierOrderId: string,
 	accountId: string,
 ): string {
+	if (provider === "dhru") return supplierOrderId;
 	const digest = createHash("sha256")
 		.update(`${provider}\n${supplierOrderId}\n${accountId}`)
 		.digest("hex");
