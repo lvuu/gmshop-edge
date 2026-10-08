@@ -4,7 +4,10 @@ import { publishPendingNotifications } from "#/features/notifications/server/del
 import { fanOutPendingCommerceNotifications } from "#/features/notifications/server/fanout";
 import { expireStoreOrders } from "#/features/shop-orders/server/expiration";
 import { publishPendingRefunds } from "#/features/shop-payments/server/refunds";
-import { publishPendingSupplierOrders } from "#/features/suppliers/server/outbox";
+import {
+	publishPendingSupplierOrders,
+	queueDueSupplierReconciliations,
+} from "#/features/suppliers/server/outbox";
 import { runTelegramMaintenance } from "#/features/telegram/server/maintenance";
 import { runMaintenance } from "#/server/scheduled/maintenance";
 
@@ -31,6 +34,11 @@ export async function runScheduledCommerceWork(
 		env.DB,
 		env.COMMERCE_QUEUE,
 		publishBatchSize,
+	);
+	const supplierReconciliations = await queueDueSupplierReconciliations(
+		env.DB,
+		publishBatchSize,
+		scheduledAt,
 	);
 	const suppliers = await publishPendingSupplierOrders(
 		env.DB,
@@ -62,6 +70,7 @@ export async function runScheduledCommerceWork(
 		expired,
 		deliveries,
 		suppliers,
+		supplierReconciliations,
 		builds,
 		refunds,
 		notificationEvents,

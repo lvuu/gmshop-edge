@@ -8,12 +8,17 @@ import { getStoreOrder } from "#/features/storefront/server/order-query";
 import { createSupplierCredentialVault } from "#/features/suppliers/secrets";
 import { handleDhruSupplierCallback } from "#/features/suppliers/server/dhru-callback";
 import { queueSupplierOrderAction } from "#/features/suppliers/server/orders-admin";
-import { publishPendingSupplierOrders } from "#/features/suppliers/server/outbox";
+import {
+	publishPendingSupplierOrders,
+	queueDueSupplierReconciliations,
+} from "#/features/suppliers/server/outbox";
 import { processSupplierOrder } from "#/features/suppliers/server/process";
 import {
 	bindServiceSupplier,
 	previewServiceSupplier,
 } from "#/features/suppliers/server/service-binding";
+import { handleQueue } from "#/server/queue/routing";
+import type { SupplierQueueMessage } from "#/server/queue/types";
 import {
 	createInitialRuntimeConfig,
 	runtimeConfigEntries,
@@ -130,7 +135,10 @@ describe("service products", { timeout: 30_000 }, () => {
 				.bind(crypto.randomUUID(), itemId),
 		]);
 	});
-	afterEach(async () => mf.dispose());
+	afterEach(async () => {
+		vi.unstubAllGlobals();
+		await mf.dispose();
+	});
 	const checkout = () =>
 		createMultiStoreOrder(db, {
 			email: "buyer@example.com",
@@ -436,7 +444,7 @@ describe("service products", { timeout: 30_000 }, () => {
 		expect(
 			await db
 				.prepare(
-					"SELECT state, selected_account_id, upstream_order_id FROM supplier_orders WHERE id = ?",
+					"SELECT state, selected_account_id, upstream_order_id, next_retry_at FROM supplier_orders WHERE id = ?",
 				)
 				.bind(supplier.id)
 				.first(),
@@ -444,7 +452,11 @@ describe("service products", { timeout: 30_000 }, () => {
 			state: "uncertain",
 			selected_account_id: accountId,
 			upstream_order_id: null,
+			next_retry_at: null,
 		});
+		expect(
+			await queueDueSupplierReconciliations(db, 25, Date.now() + 60_000),
+		).toEqual({ queued: 0 });
 		expect(posts).toBe(1);
 		expect(gets).toBe(0);
 	});
@@ -546,6 +558,307 @@ describe("service products", { timeout: 30_000 }, () => {
 			state: "uncertain",
 			selected_account_id: accountId,
 		});
+	});
+
+	const pollQueue = () =>
+		({
+			sendBatch: vi.fn().mockResolvedValue(undefined),
+		}) as unknown as Queue<SupplierQueueMessage>;
+	async function pollingSupplier() {
+		const order = await checkout();
+		await pay(order.id);
+		const supplier = await db
+			.prepare(
+				"SELECT id, delivery_record_id FROM supplier_orders WHERE order_id = ?",
+			)
+			.bind(order.id)
+			.first<{ id: string; delivery_record_id: string }>();
+		if (!supplier) throw new Error("missing supplier");
+		await expect(
+			processSupplierOrder(db, supplier.id, { fetcher }),
+		).rejects.toMatchObject({ code: "supplier_order_pending" });
+		await publishPendingSupplierOrders(db, pollQueue());
+		await db
+			.prepare("UPDATE supplier_orders SET next_retry_at = 1 WHERE id = ?")
+			.bind(supplier.id)
+			.run();
+		return { order, supplier };
+	}
+
+	it("polls prolonged processing through durable messages and acknowledges each poll before eventual delivery", async () => {
+		const order = await checkout();
+		await pay(order.id);
+		const supplier = await db
+			.prepare(
+				"SELECT id, delivery_record_id FROM supplier_orders WHERE order_id = ?",
+			)
+			.bind(order.id)
+			.first<{ id: string; delivery_record_id: string }>();
+		if (!supplier) throw new Error("missing supplier");
+		let complete = false;
+		vi.stubGlobal(
+			"fetch",
+			async (input: RequestInfo | URL, init?: RequestInit) => {
+				if (
+					new URL(String(input)).pathname.endsWith("/order") &&
+					init?.method !== "POST"
+				)
+					return Response.json({
+						status: "success",
+						code: 200,
+						data: {
+							quantity: 1,
+							replay: complete ? "Status: Clean" : "",
+							status: complete ? "success" : "processing",
+						},
+					});
+				return fetcher(input, init);
+			},
+		);
+		const body: SupplierQueueMessage = {
+			kind: "commerce.supplier",
+			version: 1,
+			supplierOrderId: supplier.id,
+		};
+		const queue = { sendBatch: vi.fn().mockResolvedValue(undefined) };
+		await publishPendingSupplierOrders(
+			db,
+			queue as unknown as Queue<SupplierQueueMessage>,
+		);
+		for (let cycle = 0; cycle < 9; cycle++) {
+			complete = cycle === 8;
+			const ack = vi.fn(),
+				retry = vi.fn();
+			await handleQueue(
+				{
+					queue: "commerce",
+					messages: [
+						{
+							body,
+							ack,
+							retry,
+							id: crypto.randomUUID(),
+							timestamp: new Date(),
+							attempts: 20,
+						},
+					],
+				} as unknown as MessageBatch<SupplierQueueMessage>,
+				{ DB: db } as unknown as Env,
+			);
+			expect(ack).toHaveBeenCalledTimes(1);
+			expect(retry).not.toHaveBeenCalled();
+			if (!complete) {
+				const due = await db
+					.prepare("SELECT next_retry_at FROM supplier_orders WHERE id = ?")
+					.bind(supplier.id)
+					.first<number>("next_retry_at");
+				if (due === null) throw new Error("missing scheduled poll");
+				expect(await queueDueSupplierReconciliations(db, 25, due)).toEqual({
+					queued: 1,
+				});
+				await publishPendingSupplierOrders(
+					db,
+					queue as unknown as Queue<SupplierQueueMessage>,
+				);
+				expect(queue.sendBatch.mock.calls.at(-1)?.[0]).toEqual([{ body }]);
+			}
+		}
+		expect(posts).toBe(1);
+		expect(
+			await queueDueSupplierReconciliations(db, 25, Date.now() + 60_000),
+		).toEqual({ queued: 0 });
+		expect(
+			await db
+				.prepare(
+					"SELECT COUNT(*) AS n FROM audit_logs WHERE action = 'queue.message_failed'",
+				)
+				.first("n"),
+		).toBe(0);
+		await processDelivery(db, supplier.delivery_record_id);
+		await expect(
+			revealStoreDelivery(db, {
+				orderNumber: order.orderNumber,
+				deliveryId: supplier.delivery_record_id,
+				email: "buyer@example.com",
+			}),
+		).resolves.toMatchObject({ content: "Status: Clean" });
+	});
+
+	it("deduplicates concurrent pollers, holds a pending transport event and recovers an abandoned published message", async () => {
+		await pollingSupplier();
+		const now = Date.now();
+		const results = await Promise.all([
+			queueDueSupplierReconciliations(db, 25, now),
+			queueDueSupplierReconciliations(db, 25, now),
+		]);
+		expect(results.reduce((sum, result) => sum + result.queued, 0)).toBe(1);
+		const sendBatch = vi
+			.fn()
+			.mockRejectedValue(new Error("transport unavailable"));
+		const queue = { sendBatch } as unknown as Queue<SupplierQueueMessage>;
+		await expect(publishPendingSupplierOrders(db, queue)).rejects.toThrow();
+		expect(await queueDueSupplierReconciliations(db, 25, now + 60_000)).toEqual(
+			{ queued: 0 },
+		);
+		sendBatch.mockResolvedValue(undefined);
+		await publishPendingSupplierOrders(db, queue);
+		// Even if the published message never reaches a worker, the due row remains recoverable.
+		expect(await queueDueSupplierReconciliations(db, 25, now + 60_000)).toEqual(
+			{ queued: 1 },
+		);
+	});
+
+	it("excludes future polls, missing Dhru IDs and ineligible customer or procurement states", async () => {
+		const { order, supplier } = await pollingSupplier();
+		const now = Date.now();
+		for (const status of [
+			"pending_payment",
+			"cancelled",
+			"refunded",
+			"completed",
+		]) {
+			await db
+				.prepare("UPDATE shop_orders SET status = ? WHERE id = ?")
+				.bind(status, order.id)
+				.run();
+			expect(await queueDueSupplierReconciliations(db, 25, now)).toEqual({
+				queued: 0,
+			});
+		}
+		await db
+			.prepare("UPDATE shop_orders SET status = 'fulfilling' WHERE id = ?")
+			.bind(order.id)
+			.run();
+		for (const state of ["submitting", "supplied", "failed", "refunded"]) {
+			await db
+				.prepare("UPDATE supplier_orders SET state = ? WHERE id = ?")
+				.bind(state, supplier.id)
+				.run();
+			expect(await queueDueSupplierReconciliations(db, 25, now)).toEqual({
+				queued: 0,
+			});
+		}
+		await db
+			.prepare(
+				"UPDATE supplier_orders SET state = 'uncertain', next_retry_at = ?, upstream_order_id = 'D1' WHERE id = ?",
+			)
+			.bind(now + 1, supplier.id)
+			.run();
+		expect(await queueDueSupplierReconciliations(db, 25, now)).toEqual({
+			queued: 0,
+		});
+		await db
+			.prepare(
+				"UPDATE supplier_orders SET next_retry_at = 1, upstream_order_id = NULL WHERE id = ?",
+			)
+			.bind(supplier.id)
+			.run();
+		expect(await queueDueSupplierReconciliations(db, 25, now)).toEqual({
+			queued: 0,
+		});
+		await db
+			.prepare(
+				"UPDATE supplier_orders SET upstream_order_id = 'D1' WHERE id = ?",
+			)
+			.bind(supplier.id)
+			.run();
+		expect(await queueDueSupplierReconciliations(db, 25, now)).toEqual({
+			queued: 1,
+		});
+	});
+
+	it("does not enqueue or change rows after completion, refund or a newer retry wins the polling race", async () => {
+		for (const change of ["complete", "refund", "retry"]) {
+			const { order, supplier } = await pollingSupplier();
+			const now = Date.now();
+			const racingDb = {
+				prepare: db.prepare.bind(db),
+				batch: async (statements: D1PreparedStatement[]) => {
+					if (change === "complete")
+						await db
+							.prepare(
+								"UPDATE supplier_orders SET state = 'supplied' WHERE id = ?",
+							)
+							.bind(supplier.id)
+							.run();
+					if (change === "refund")
+						await db
+							.prepare(
+								"UPDATE shop_orders SET status = 'refunded' WHERE id = ?",
+							)
+							.bind(order.id)
+							.run();
+					if (change === "retry")
+						await db
+							.prepare(
+								"UPDATE supplier_orders SET next_retry_at = ? WHERE id = ?",
+							)
+							.bind(now + 120_000, supplier.id)
+							.run();
+					return db.batch(statements);
+				},
+			} as D1Database;
+			expect(await queueDueSupplierReconciliations(racingDb, 25, now)).toEqual({
+				queued: 0,
+			});
+			expect(
+				await db
+					.prepare("SELECT next_retry_at FROM supplier_orders WHERE id = ?")
+					.bind(supplier.id)
+					.first("next_retry_at"),
+			).toBe(change === "retry" ? now + 120_000 : 1);
+			await db
+				.prepare("UPDATE supplier_orders SET next_retry_at = NULL WHERE id = ?")
+				.bind(supplier.id)
+				.run();
+		}
+		expect(
+			await db
+				.prepare(
+					"SELECT COUNT(*) AS n FROM outbox_events WHERE idempotency_key LIKE 'supplier-poll:%'",
+				)
+				.first("n"),
+		).toBe(0);
+	});
+
+	it("rolls back the polling event when retry scheduling fails", async () => {
+		const { supplier } = await pollingSupplier();
+		await db
+			.prepare(
+				"CREATE TRIGGER fail_poll_schedule BEFORE UPDATE ON supplier_orders BEGIN SELECT RAISE(ABORT, 'schedule failed'); END",
+			)
+			.run();
+		await expect(queueDueSupplierReconciliations(db)).rejects.toThrow();
+		expect(
+			await db
+				.prepare("SELECT next_retry_at FROM supplier_orders WHERE id = ?")
+				.bind(supplier.id)
+				.first("next_retry_at"),
+		).toBe(1);
+		expect(
+			await db
+				.prepare(
+					"SELECT COUNT(*) AS n FROM outbox_events WHERE idempotency_key LIKE 'supplier-poll:%'",
+				)
+				.first("n"),
+		).toBe(0);
+	});
+
+	it("uses the retry and aggregate indexes to find due polls", async () => {
+		let selection = "";
+		await queueDueSupplierReconciliations({
+			prepare: (sql: string) => {
+				selection = sql;
+				return db.prepare(sql);
+			},
+		} as D1Database);
+		const plan = await db
+			.prepare(`EXPLAIN QUERY PLAN ${selection}`)
+			.bind(Date.now(), 25)
+			.all<{ detail: string }>();
+		const detail = plan.results.map((row) => row.detail).join("\n");
+		expect(detail).toContain("supplier_orders_state_retry_idx");
+		expect(detail).toContain("outbox_events_aggregate_idx");
 	});
 
 	const adminAudit = () => ({

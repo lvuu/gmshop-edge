@@ -167,3 +167,21 @@ D1 故障注入检查覆盖首次回执写入失败后，通过认证 GET 恢复
 Receipt-persistence validation: 753 unit/security, 295 integration and 23 Bun runtime tests passed (1,071 total). Two existing TODO tests remain unexecuted and the manual provider smoke file is skipped. Typecheck, Biome and both Workers/Bun builds passed, retaining existing unrelated Biome notices.
 
 回执持久化验证：753 项单元及安全测试、295 项集成测试、23 项 Bun 运行时测试通过，共 1,071 项。原有两项 TODO 未执行，真实供应商手工测试文件跳过。类型检查、Biome 和 Workers/Bun 构建通过，保留已有无关 Biome 提示。
+
+## Durable reconciliation polling / 持久化核验轮询
+
+The shared Workers/Bun scheduler now queues due uncertain purchases before publishing supplier events. Eligible rows require a selected account, a due next_retry_at and a paid/fulfilling customer order. Dhru additionally requires a known upstream order ID; established stock providers retain their request-reference reconciliation path. The scheduler uses the existing retry and aggregate indexes and bounded batches. A pending supplier event suppresses another poll for the same purchase.
+
+Workers/Bun 共用调度器现在会先为到期、结果待核验的采购安排队列事件，再投递供应商事件。任务须已选账号、next_retry_at 到期且客户订单已支付或正在交付；Dhru 还须有已知上游订单号，原有卡密供应商保留按请求引用核验的路径。调度器使用现有重试和事件聚合索引，限制批量大小；已有待投递供应商事件时，不为同一采购重复安排轮询。
+
+Each poll atomically inserts a reference-only outbox event and moves next_retry_at at least one minute forward, with state/version/due-time and parent-status checks repeated at write time. Concurrent schedulers cannot both claim the same due revision. Failed transport leaves the event pending; even an abandoned published message is eligible for a later poll. Once a worker persists normal processing/uncertainty, its queue message is acknowledged rather than exhausting transport retries. Outages and unexpected errors retain the existing retry policy.
+
+每次轮询原子写入仅含采购 ID 的事件，并将 next_retry_at 推进至少一分钟；写入时再次检查状态、版本、到期时间和客户订单状态。并发调度器不能同时占用同一到期版本。投递失败会保留待投递事件；已投递但未被处理的消息也可由后续轮询恢复。任务保存正常处理中或待核验状态后，队列确认当前消息，避免耗尽传输重试次数；停机及意外错误沿用原重试策略。
+
+Dhru purchases without an upstream ID keep the original account claim and enter a manual hold with next_retry_at NULL. Duplicate messages do not read credentials, decrypt customer inputs, claim API budget or make an upstream request. Unknown IDs are not automatically replaced or resubmitted. Tests cover nine processing cycles through the real queue handler followed by private delivery with one POST; concurrent scheduling, transport/abandoned-message recovery, eligibility and write races, rollback and query plans. No migration, production deployment or live purchase is performed; browser acceptance remains pending.
+
+缺少上游订单号的 Dhru 采购保留原账号占用，并以 next_retry_at 为空进入人工核查状态。重复消息不会读取凭据、解密客户输入、占用 API 限额或请求上游；也不会自动替换订单号或重新下单。测试覆盖真实队列处理器连续九轮处理后完成私密交付，整个过程仅一次 POST；同时覆盖并发调度、投递及消息丢失恢复、资格与写入竞争、回滚和查询计划。本轮不增加迁移、不部署生产环境或执行真实采购，浏览器验收仍待完成。
+
+Polling validation: 753 unit/security, 301 integration and 23 Bun runtime tests passed (1,077 total). Two existing TODO tests remain unexecuted and the manual provider smoke file is skipped. Typecheck, Biome and Workers/Bun builds passed, retaining existing unrelated Biome notices.
+
+轮询验证：753 项单元及安全测试、301 项集成测试、23 项 Bun 运行时测试通过，共 1,077 项。原有两项 TODO 未执行，真实供应商手工测试文件跳过。类型检查、Biome 及 Workers/Bun 构建通过，保留已有无关 Biome 提示。

@@ -155,6 +155,21 @@ async function processSupplierOrderUnlocked(
 			"Supplier configuration unavailable",
 		);
 	const snapshot = parseBindingSnapshot(order.binding_snapshot_json);
+	if (
+		snapshot.provider === "dhru" &&
+		order.selected_account_id &&
+		!order.upstream_order_id
+	)
+		return applyPurchaseResult(
+			db,
+			order,
+			{
+				status: "uncertain",
+				upstreamOrderId: null,
+				errorCode: "supplier_order_id_missing",
+			},
+			runtime.commerceSecret,
+		);
 	const service = await loadServiceInput(
 		db,
 		order.order_item_id,
@@ -389,18 +404,23 @@ async function applyPurchaseResult(
 	if (result.status === "supplied")
 		return fulfillSupplierOrder(db, order, result, commerceSecret);
 	if (result.status === "processing" || result.status === "uncertain") {
+		const isDhru =
+			parseBindingSnapshot(order.binding_snapshot_json).provider === "dhru";
 		await db
 			.prepare(
 				`UPDATE supplier_orders SET state = 'uncertain',
 				 upstream_order_id = COALESCE(?, upstream_order_id),
 				 account_locked_at = COALESCE(account_locked_at, ?),
-				 next_retry_at = ?, last_error_code = ?, updated_at = ?
+				 next_retry_at = CASE WHEN ? AND COALESCE(?, upstream_order_id) IS NULL
+				  THEN NULL ELSE ? END, last_error_code = ?, updated_at = ?
 				 WHERE id = ? AND selected_account_id IS NOT NULL
 				 AND state IN ('submitting', 'uncertain')`,
 			)
 			.bind(
 				result.upstreamOrderId,
 				Date.now(),
+				isDhru ? 1 : 0,
+				result.upstreamOrderId,
 				Date.now() + 15_000,
 				result.status === "processing"
 					? "supplier_order_processing"
@@ -721,18 +741,23 @@ async function markUncertain(
 	upstreamOrderId: string | null = null,
 ) {
 	const now = Date.now();
+	const isDhru =
+		parseBindingSnapshot(order.binding_snapshot_json).provider === "dhru";
 	await db
 		.prepare(
 			`UPDATE supplier_orders SET state = 'uncertain',
 			 upstream_order_id = COALESCE(upstream_order_id, ?),
 			 account_locked_at = COALESCE(account_locked_at, ?),
-			 next_retry_at = ?, last_error_code = ?, updated_at = ?
+			 next_retry_at = CASE WHEN ? AND COALESCE(upstream_order_id, ?) IS NULL
+			  THEN NULL ELSE ? END, last_error_code = ?, updated_at = ?
 			 WHERE id = ? AND selected_account_id = ?
 			 AND state IN ('submitting', 'uncertain')`,
 		)
 		.bind(
 			upstreamOrderId,
 			now,
+			isDhru ? 1 : 0,
+			upstreamOrderId,
 			now + 15_000,
 			code,
 			now,
