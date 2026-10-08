@@ -39,9 +39,11 @@ type SupplierOrderContext = {
 		| "refunded";
 	selected_account_id: string | null;
 	selected_credentials_revision: number | null;
+	account_locked_at: number | null;
 	provider_request_no: string | null;
 	upstream_order_id: string | null;
 	binding_snapshot_json: string;
+	updated_at: number;
 };
 
 type BindingSnapshot = {
@@ -435,13 +437,48 @@ async function applyPurchaseResult(
 			"Supplier order is still pending",
 		);
 	}
-	await releaseDefinitiveFailure(
-		db,
-		order,
-		order.selected_account_id ?? "",
-		result.errorCode,
-		Date.now(),
-	);
+	if (order.account_locked_at !== null || order.upstream_order_id !== null) {
+		// A final rejection of an accepted purchase is terminal. Its identity and
+		// credential revision remain locked; another account must never buy again.
+		const rejected = await db
+			.prepare(`UPDATE supplier_orders AS so
+			 SET state = 'failed', next_retry_at = NULL, last_error_code = ?, updated_at = ?
+			 WHERE so.id = ? AND so.state = ? AND so.updated_at = ?
+			 AND so.state IN ('submitting', 'uncertain')
+			 AND so.selected_account_id IS ? AND so.selected_credentials_revision IS ?
+			 AND so.account_locked_at IS ? AND so.provider_request_no IS ?
+			 AND so.upstream_order_id IS ?
+			 AND EXISTS (SELECT 1 FROM shop_orders o WHERE o.id = so.order_id
+			  AND o.status IN ('paid', 'fulfilling'))`)
+			.bind(
+				result.errorCode,
+				Math.max(Date.now(), order.updated_at + 1),
+				order.id,
+				order.state,
+				order.updated_at,
+				order.selected_account_id,
+				order.selected_credentials_revision,
+				order.account_locked_at,
+				order.provider_request_no,
+				order.upstream_order_id,
+			)
+			.run();
+		if (rejected.meta.changes !== 1)
+			throw new DomainError(
+				"supplier_order_changed",
+				409,
+				"Supplier order changed during reconciliation",
+				{ retryable: true },
+			);
+	} else {
+		await releaseDefinitiveFailure(
+			db,
+			order,
+			order.selected_account_id ?? "",
+			result.errorCode,
+			Date.now(),
+		);
+	}
 	throw new DomainError(
 		result.errorCode,
 		409,

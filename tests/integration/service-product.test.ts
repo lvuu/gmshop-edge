@@ -12,7 +12,10 @@ import {
 	publishPendingSupplierOrders,
 	queueDueSupplierReconciliations,
 } from "#/features/suppliers/server/outbox";
-import { processSupplierOrder } from "#/features/suppliers/server/process";
+import {
+	completeSupplierOrderFromCallback,
+	processSupplierOrder,
+} from "#/features/suppliers/server/process";
 import {
 	bindServiceSupplier,
 	previewServiceSupplier,
@@ -859,6 +862,282 @@ describe("service products", { timeout: 30_000 }, () => {
 		const detail = plan.results.map((row) => row.detail).join("\n");
 		expect(detail).toContain("supplier_orders_state_retry_idx");
 		expect(detail).toContain("outbox_events_aggregate_idx");
+	});
+
+	const rejectedOrderFetcher: typeof fetch = async (input, init) => {
+		if (
+			new URL(String(input)).pathname.endsWith("/order") &&
+			init?.method !== "POST"
+		)
+			return Response.json({
+				status: "success",
+				code: 200,
+				data: {
+					order_uuid: "D1",
+					quantity: 1,
+					replay: "private-rejection-detail",
+					status: "rejected",
+				},
+			});
+		return fetcher(input, init);
+	};
+	it("ends an accepted Dhru rejection without resubmission and exposes only a safe customer failure", async () => {
+		const { order, supplier } = await pollingSupplier();
+		vi.stubGlobal("fetch", rejectedOrderFetcher);
+		const ack = vi.fn(),
+			retry = vi.fn();
+		await handleQueue(
+			{
+				queue: "commerce",
+				messages: [
+					{
+						body: {
+							kind: "commerce.supplier",
+							version: 1,
+							supplierOrderId: supplier.id,
+						},
+						id: crypto.randomUUID(),
+						timestamp: new Date(),
+						attempts: 1,
+						ack,
+						retry,
+					},
+				],
+			} as unknown as MessageBatch<SupplierQueueMessage>,
+			{ DB: db } as unknown as Env,
+		);
+		expect(ack).toHaveBeenCalledTimes(1);
+		expect(retry).not.toHaveBeenCalled();
+		expect(
+			await db
+				.prepare("SELECT * FROM supplier_orders WHERE id = ?")
+				.bind(supplier.id)
+				.first(),
+		).toMatchObject({
+			state: "failed",
+			next_retry_at: null,
+			upstream_order_id: "D1",
+			selected_account_id: accountId,
+			selected_credentials_revision: 1,
+			attempt_count: 1,
+			selection_count: 1,
+			last_error_code: "dhru_order_rejected",
+		});
+		expect(
+			await db
+				.prepare(
+					"SELECT health_status, consecutive_failures FROM supplier_accounts WHERE id = ?",
+				)
+				.bind(accountId)
+				.first(),
+		).toMatchObject({ health_status: "healthy", consecutive_failures: 0 });
+		const customer = await getStoreOrder(db, {
+			orderNumber: order.orderNumber,
+			email: "buyer@example.com",
+		});
+		expect(customer.deliveries[0]).toMatchObject({
+			type: "service",
+			status: "failed",
+			hasContent: false,
+		});
+		expect(JSON.stringify(customer)).not.toContain("private-rejection-detail");
+		await expect(
+			revealStoreDelivery(db, {
+				orderNumber: order.orderNumber,
+				email: "buyer@example.com",
+				deliveryId: supplier.delivery_record_id,
+			}),
+		).rejects.toMatchObject({ code: "delivery_not_found" });
+		for (const action of ["reconcile", "reselect"] as const)
+			await expect(
+				queueSupplierOrderAction(db, { id: supplier.id, action }, adminAudit()),
+			).rejects.toMatchObject({ code: "supplier_order_action_unavailable" });
+		expect(
+			await queueDueSupplierReconciliations(db, 25, Date.now() + 60_000),
+		).toEqual({ queued: 0 });
+		const network = vi.fn(rejectedOrderFetcher);
+		await expect(
+			processSupplierOrder(db, supplier.id, { fetcher: network }),
+		).rejects.toMatchObject({ code: "supplier_order_terminal" });
+		expect(network).not.toHaveBeenCalled();
+		expect(posts).toBe(1);
+		expect(
+			await db
+				.prepare("SELECT content_encrypted FROM delivery_records WHERE id = ?")
+				.bind(supplier.delivery_record_id)
+				.first("content_encrypted"),
+		).toBeNull();
+		expect(
+			await db
+				.prepare(
+					"SELECT COUNT(*) AS n FROM outbox_events WHERE event_type = 'delivery.requested'",
+				)
+				.first("n"),
+		).toBe(0);
+		expect(
+			JSON.stringify(
+				(
+					await db
+						.prepare(
+							"SELECT after FROM audit_logs WHERE action = 'queue.message_failed'",
+						)
+						.all()
+				).results,
+			),
+		).not.toContain("private-rejection-detail");
+	});
+
+	it("does not finalize an unrelated rejection or a rejection whose quantity does not match", async () => {
+		const { supplier } = await pollingSupplier();
+		for (const data of [
+			{ order_uuid: "OTHER", quantity: 1 },
+			{ order_uuid: "D1", quantity: 2 },
+		]) {
+			await expect(
+				processSupplierOrder(db, supplier.id, {
+					fetcher: async () =>
+						Response.json({
+							status: "success",
+							code: 200,
+							data: {
+								...data,
+								status: "rejected",
+								replay: "private-rejection-detail",
+							},
+						}),
+				}),
+			).rejects.toMatchObject({ code: "supplier_order_pending" });
+			expect(
+				await db
+					.prepare(
+						"SELECT state, upstream_order_id FROM supplier_orders WHERE id = ?",
+					)
+					.bind(supplier.id)
+					.first(),
+			).toMatchObject({ state: "uncertain", upstream_order_id: "D1" });
+		}
+		await expect(
+			processSupplierOrder(db, supplier.id, { fetcher: rejectedOrderFetcher }),
+		).rejects.toMatchObject({ code: "dhru_order_rejected", retryable: false });
+		expect(posts).toBe(1);
+	});
+
+	it("preserves the accepted purchase after failed terminal persistence and can reconcile again", async () => {
+		const { supplier } = await pollingSupplier();
+		await db
+			.prepare(
+				"CREATE TRIGGER fail_final_rejection BEFORE UPDATE ON supplier_orders WHEN NEW.state = 'failed' BEGIN SELECT RAISE(ABORT, 'terminal write failed'); END",
+			)
+			.run();
+		await expect(
+			processSupplierOrder(db, supplier.id, { fetcher: rejectedOrderFetcher }),
+		).rejects.toThrow();
+		expect(
+			await db
+				.prepare(
+					"SELECT state, upstream_order_id, selected_account_id, next_retry_at FROM supplier_orders WHERE id = ?",
+				)
+				.bind(supplier.id)
+				.first(),
+		).toMatchObject({
+			state: "uncertain",
+			upstream_order_id: "D1",
+			selected_account_id: accountId,
+			next_retry_at: 1,
+		});
+		await db.prepare("DROP TRIGGER fail_final_rejection").run();
+		await expect(
+			processSupplierOrder(db, supplier.id, { fetcher: rejectedOrderFetcher }),
+		).rejects.toMatchObject({ code: "dhru_order_rejected", retryable: false });
+		expect(posts).toBe(1);
+	});
+
+	it("preserves fulfillment, refunds and a changed identity that win the final rejection write race", async () => {
+		for (const change of ["fulfill", "refund", "identity"]) {
+			const { order, supplier } = await pollingSupplier();
+			const racingDb = {
+				prepare: (sql: string) => {
+					const statement = db.prepare(sql);
+					if (!sql.includes("SET state = 'failed', next_retry_at = NULL"))
+						return statement;
+					return {
+						bind: (...values: unknown[]) => {
+							const bound = statement.bind(...values);
+							return {
+								run: async () => {
+									if (change === "fulfill")
+										await completeSupplierOrderFromCallback(db, supplier.id, {
+											status: "supplied",
+											upstreamOrderId: "D1",
+											fulfillment: {
+												type: "service",
+												resultText: "Verified result",
+											},
+										});
+									if (change === "refund")
+										await db.batch([
+											db
+												.prepare(
+													"UPDATE shop_orders SET status = 'refunded' WHERE id = ?",
+												)
+												.bind(order.id),
+											db
+												.prepare(
+													"UPDATE supplier_orders SET state = 'refunded' WHERE id = ?",
+												)
+												.bind(supplier.id),
+										]);
+									if (change === "identity")
+										await db
+											.prepare(
+												"UPDATE supplier_orders SET upstream_order_id = 'NEW' WHERE id = ?",
+											)
+											.bind(supplier.id)
+											.run();
+									return bound.run();
+								},
+							};
+						},
+					} as D1PreparedStatement;
+				},
+				batch: db.batch.bind(db),
+			} as D1Database;
+			await expect(
+				processSupplierOrder(racingDb, supplier.id, {
+					fetcher: rejectedOrderFetcher,
+				}),
+			).rejects.toMatchObject({
+				code: "supplier_order_changed",
+				retryable: true,
+			});
+			expect(
+				await db
+					.prepare(
+						"SELECT state, upstream_order_id FROM supplier_orders WHERE id = ?",
+					)
+					.bind(supplier.id)
+					.first(),
+			).toMatchObject({
+				state:
+					change === "fulfill"
+						? "supplied"
+						: change === "refund"
+							? "refunded"
+							: "uncertain",
+				upstream_order_id: change === "identity" ? "NEW" : "D1",
+			});
+			if (change === "fulfill") {
+				await processDelivery(db, supplier.delivery_record_id);
+				await expect(
+					revealStoreDelivery(db, {
+						orderNumber: order.orderNumber,
+						email: "buyer@example.com",
+						deliveryId: supplier.delivery_record_id,
+					}),
+				).resolves.toMatchObject({ content: "Verified result" });
+			}
+		}
+		expect(posts).toBe(3);
 	});
 
 	const adminAudit = () => ({

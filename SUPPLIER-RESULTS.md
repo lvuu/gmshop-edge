@@ -185,3 +185,21 @@ Dhru purchases without an upstream ID keep the original account claim and enter 
 Polling validation: 753 unit/security, 301 integration and 23 Bun runtime tests passed (1,077 total). Two existing TODO tests remain unexecuted and the manual provider smoke file is skipped. Typecheck, Biome and Workers/Bun builds passed, retaining existing unrelated Biome notices.
 
 轮询验证：753 项单元及安全测试、301 项集成测试、23 项 Bun 运行时测试通过，共 1,077 项。原有两项 TODO 未执行，真实供应商手工测试文件跳过。类型检查、Biome 及 Workers/Bun 构建通过，保留已有无关 Biome 提示。
+
+## Final upstream rejection / 上游最终拒绝
+
+A definitive rejection after account locking or a known upstream order now ends procurement in failed state and clears next_retry_at. It retains the original account, credentials revision, request reference, upstream order ID and pricing history. It cannot enter automatic or administrative reselection. A definitive rejection before acceptance keeps the existing account-release/failover behavior. A normal service rejection does not degrade the supplier connection's health.
+
+账号已锁定或已有上游订单号后收到明确拒绝，采购现在会转为失败并清空 next_retry_at，同时保留原账号、凭据版本、请求引用、上游订单号及价格记录。该采购不能自动或通过后台重新选购。接单前的明确拒绝仍沿用原账号释放及切换逻辑；正常服务拒绝不会降低供应商连接健康状态。
+
+The terminal update rechecks state, version, account, credential revision, lock, request reference, upstream identity and paid/fulfilling parent status. A conflicting completion, refund or changed identity is preserved and returns a retryable fixed conflict code. Failed persistence leaves the accepted purchase available for authenticated reconciliation; it does not authorize another POST. Customer order reads show the existing localized service failure without upstream replay text or result access. The customer payment and refund policy are unchanged; an upstream rejection does not automatically refund a customer payment.
+
+终态更新再次核对状态、版本、账号、凭据版本、锁定、请求引用、上游身份以及客户订单已支付或正在交付状态。竞争中先完成的交付、退款或身份变更会被保留，并返回可重试的固定冲突代码。写入失败时保留已接单采购，可再次认证查询，但不能重新 POST。客户订单使用现有本地化服务失败状态，不公开上游回复或开放结果访问。客户支付及退款策略保持原有行为，上游拒绝不会自动退回客户付款。
+
+Integration checks cover the real queue handler acknowledging a final rejection, blocked recovery actions and polling, private result exclusion, unrelated/mismatched-quantity rejections, failed terminal persistence and fulfillment/refund/identity races. No migration, deployment or live purchase is performed; browser acceptance remains pending.
+
+集成检查覆盖真实队列处理器确认最终拒单、禁止恢复操作及轮询、私密结果排除、错误订单或数量的拒绝、终态写入失败，以及交付、退款和身份变更竞争。本轮不增加迁移、不部署或执行真实采购，浏览器验收仍待完成。
+
+Final-rejection validation: 753 unit/security, 305 integration and 23 Bun runtime tests passed (1,081 total). Two existing TODO tests remain unexecuted and the manual provider smoke file is skipped. Typecheck, Biome and Workers/Bun builds passed, retaining existing unrelated Biome notices.
+
+最终拒单验证：753 项单元及安全测试、305 项集成测试、23 项 Bun 运行时测试通过，共 1,081 项。原有两项 TODO 未执行，真实供应商手工测试文件跳过。类型检查、Biome 及 Workers/Bun 构建通过，保留已有无关 Biome 提示。
