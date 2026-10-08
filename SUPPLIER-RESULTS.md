@@ -99,3 +99,21 @@ Checks cover stale responses, changed proofs, retry, effect replay, blank respon
 Validation: 738 unit/security, 284 integration and 23 Bun runtime tests passed (1,045 total); two existing TODO tests were not executed. Typecheck and Biome passed, with existing unrelated Biome notices.
 
 验证：738 项单元及安全测试、284 项集成测试、23 项 Bun 运行时测试通过，共 1,045 项；原有两项 TODO 未执行。类型检查和 Biome 通过，保留已有无关 Biome 提示。
+
+## Administrative recovery / 后台恢复
+
+Recovery requires the existing suppliers/test permission and a parent order that is paid or fulfilling. Reselection is available only for pending/selecting/failed procurement with no selected account, account lock or known upstream order. Reconciliation queues only submitting/uncertain procurement that already has a selected account; it keeps the original account, credentials revision and upstream identity. Supplied/refunded procurement and cancelled/refunded/completed customer orders cannot be reactivated through these actions. The order list returns parent status and lock time so its buttons follow the same eligibility policy as the server.
+
+恢复操作继续要求 suppliers/test 权限，客户订单须为已付款或履约中。重新选择账户仅适用于待处理、选择中或失败的采购任务，并且不能存在已选账户、账户锁或已知上游订单。查询上游仅为已选账户且提交中或状态不确定的任务入队，保留原账户、凭据版本及上游订单身份。已供货或已退款采购任务，以及已取消、已退款或已完成的客户订单，不能由这些操作重新激活。后台列表返回客户订单状态和账户锁时间，按钮与服务端共用资格规则。
+
+A single D1 transaction compares the read procurement state, update time, selected account, account lock and upstream ID, and rechecks the parent status. Only a matching row can create the uniquely identified outbox reference; the state update and a bounded audit record require that exact reference. A losing race reports a conflict without overwriting completion/locking, adding an outbox event or recording false audit success. Audit persistence failure rolls back all three writes. Queue payloads remain supplier-order references only.
+
+同一个 D1 事务比较读取时的采购状态、更新时间、已选账户、账户锁和上游 ID，并再次检查客户订单状态。匹配时才创建带唯一标识的入队事件，状态更新和精简审计记录均依赖该事件。竞态失败返回冲突，不覆盖完成或锁定状态，不写入入队事件，也不记录虚假审计成功。审计持久化失败会回滚全部三项写入。队列消息仍只包含采购任务引用。
+
+Integration checks cover failed-purchase recovery and authenticated reconciliation with a single Dhru POST, ineligible parent states, completion/account-lock/refund races, reference-only payloads and audit-failure rollback. Browser checks and a real paid supplier smoke remain pending; this change does not deploy production or place a live purchase.
+
+集成检查覆盖失败采购恢复、仅一次 Dhru POST 后的认证查询、不符合条件的客户订单状态、完成/账户锁/退款竞态、仅引用的队列消息和审计失败回滚。浏览器及真实付费供应商验收仍待完成；本轮不部署生产环境或执行真实采购。
+
+Recovery validation: 738 unit/security, 288 integration and 23 Bun runtime tests passed (1,049 total), with two existing TODO tests unexecuted. Typecheck, Biome and Workers/Bun builds passed.
+
+恢复流程验证：738 项单元及安全测试、288 项集成测试、23 项 Bun 运行时测试通过，共 1,049 项；原有两项 TODO 未执行。类型检查、Biome 及 Workers/Bun 构建通过。

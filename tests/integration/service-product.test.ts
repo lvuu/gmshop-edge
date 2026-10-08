@@ -7,6 +7,7 @@ import { createMultiStoreOrder } from "#/features/storefront/server/multi-order"
 import { getStoreOrder } from "#/features/storefront/server/order-query";
 import { createSupplierCredentialVault } from "#/features/suppliers/secrets";
 import { handleDhruSupplierCallback } from "#/features/suppliers/server/dhru-callback";
+import { queueSupplierOrderAction } from "#/features/suppliers/server/orders-admin";
 import { processSupplierOrder } from "#/features/suppliers/server/process";
 import {
 	bindServiceSupplier,
@@ -293,6 +294,175 @@ describe("service products", { timeout: 30_000 }, () => {
 		expect(JSON.stringify(plan.results)).toContain(
 			"supplier_orders_order_item_uidx",
 		);
+	});
+
+	const adminAudit = () => ({
+		request: new Request("https://shop.example/admin/suppliers/orders"),
+		actorUserId: accountId,
+	});
+	async function failedSupplier() {
+		const order = await checkout();
+		await pay(order.id);
+		await db
+			.prepare("UPDATE supplier_orders SET state = 'failed' WHERE order_id = ?")
+			.bind(order.id)
+			.run();
+		const supplier = await db
+			.prepare("SELECT id FROM supplier_orders WHERE order_id = ?")
+			.bind(order.id)
+			.first<{ id: string }>();
+		if (!supplier) throw new Error("missing supplier");
+		return { order, supplier };
+	}
+	async function adminEffects() {
+		return {
+			outbox: await db
+				.prepare(
+					"SELECT COUNT(*) AS n FROM outbox_events WHERE idempotency_key LIKE 'supplier-admin-%'",
+				)
+				.first("n"),
+			audit: await db
+				.prepare(
+					"SELECT COUNT(*) AS n FROM audit_logs WHERE action IN ('supplier_order.reselect', 'supplier_order.reconcile')",
+				)
+				.first("n"),
+		};
+	}
+	it("reselects a failed purchase and reconciles the selected Dhru order without resubmission", async () => {
+		const { supplier } = await failedSupplier();
+		await expect(
+			queueSupplierOrderAction(
+				db,
+				{ id: supplier.id, action: "reselect" },
+				adminAudit(),
+			),
+		).resolves.toMatchObject({ queued: true });
+		expect(
+			await db
+				.prepare("SELECT state FROM supplier_orders WHERE id = ?")
+				.bind(supplier.id)
+				.first("state"),
+		).toBe("pending");
+		await expect(
+			processSupplierOrder(db, supplier.id, { fetcher }),
+		).rejects.toMatchObject({ code: "supplier_order_pending" });
+		await expect(
+			queueSupplierOrderAction(
+				db,
+				{ id: supplier.id, action: "reselect" },
+				adminAudit(),
+			),
+		).rejects.toMatchObject({ code: "supplier_order_action_unavailable" });
+		await queueSupplierOrderAction(
+			db,
+			{ id: supplier.id, action: "reconcile" },
+			adminAudit(),
+		);
+		await expect(
+			processSupplierOrder(db, supplier.id, { fetcher }),
+		).resolves.toMatchObject({ state: "supplied" });
+		expect(posts).toBe(1);
+		expect(await adminEffects()).toEqual({ outbox: 2, audit: 2 });
+		const events = await db
+			.prepare(
+				"SELECT payload FROM outbox_events WHERE idempotency_key LIKE 'supplier-admin-%'",
+			)
+			.all<{ payload: string }>();
+		expect(events.results.map((event) => JSON.parse(event.payload))).toEqual([
+			{ supplierOrderId: supplier.id },
+			{ supplierOrderId: supplier.id },
+		]);
+	});
+	it("refuses recovery after refund, cancellation or completion with no queued or audited action", async () => {
+		const { supplier, order } = await failedSupplier();
+		for (const status of ["refunded", "cancelled", "completed"]) {
+			await db
+				.prepare("UPDATE shop_orders SET status = ? WHERE id = ?")
+				.bind(status, order.id)
+				.run();
+			await expect(
+				queueSupplierOrderAction(
+					db,
+					{ id: supplier.id, action: "reselect" },
+					adminAudit(),
+				),
+			).rejects.toMatchObject({ code: "supplier_order_action_unavailable" });
+		}
+		expect(await adminEffects()).toEqual({ outbox: 0, audit: 0 });
+	});
+	it("does not overwrite completion, account locking or refund that wins the read/write race", async () => {
+		for (const change of ["completed", "locked", "refunded"]) {
+			const { supplier, order } = await failedSupplier();
+			const racingDb = {
+				prepare: db.prepare.bind(db),
+				batch: async (statements: D1PreparedStatement[]) => {
+					if (change === "completed")
+						await db
+							.prepare(
+								"UPDATE supplier_orders SET state = 'supplied' WHERE id = ?",
+							)
+							.bind(supplier.id)
+							.run();
+					if (change === "locked")
+						await db
+							.prepare(
+								"UPDATE supplier_orders SET state = 'uncertain', selected_account_id = ?, selected_credentials_revision = 1, provider_request_no = 'locked-request', account_locked_at = 1, upstream_order_id = 'D1' WHERE id = ?",
+							)
+							.bind(accountId, supplier.id)
+							.run();
+					if (change === "refunded")
+						await db
+							.prepare(
+								"UPDATE shop_orders SET status = 'refunded' WHERE id = ?",
+							)
+							.bind(order.id)
+							.run();
+					return db.batch(statements);
+				},
+			} as D1Database;
+			await expect(
+				queueSupplierOrderAction(
+					racingDb,
+					{ id: supplier.id, action: "reselect" },
+					adminAudit(),
+				),
+			).rejects.toMatchObject({ code: "supplier_order_changed" });
+			expect(
+				await db
+					.prepare("SELECT state FROM supplier_orders WHERE id = ?")
+					.bind(supplier.id)
+					.first("state"),
+			).toBe(
+				change === "completed"
+					? "supplied"
+					: change === "locked"
+						? "uncertain"
+						: "failed",
+			);
+		}
+		expect(await adminEffects()).toEqual({ outbox: 0, audit: 0 });
+	});
+	it("rolls back the queue and state update when audit persistence fails", async () => {
+		const { supplier } = await failedSupplier();
+		await db
+			.prepare(
+				"CREATE TRIGGER fail_supplier_audit BEFORE INSERT ON audit_logs WHEN NEW.action = 'supplier_order.reselect' BEGIN SELECT RAISE(ABORT, 'audit failed'); END",
+			)
+			.run();
+		await expect(
+			queueSupplierOrderAction(
+				db,
+				{ id: supplier.id, action: "reselect" },
+				adminAudit(),
+			),
+		).rejects.toThrow();
+		expect(
+			await db
+				.prepare("SELECT state FROM supplier_orders WHERE id = ?")
+				.bind(supplier.id)
+				.first("state"),
+		).toBe("failed");
+		expect(await adminEffects()).toEqual({ outbox: 0, audit: 0 });
 	});
 
 	it("decrypts only the immutable customer input snapshot at submission", async () => {

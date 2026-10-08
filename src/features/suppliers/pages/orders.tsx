@@ -20,6 +20,7 @@ import { formatDateTime, formatMinorAmount, formatNumber } from "#/lib/format";
 import { useCurrentProTableUrlState } from "#/lib/pro-table-url-state";
 import { m } from "#/paraglide/messages";
 import { supplierErrorLabel } from "../error-label";
+import { supplierOrderActionAllowed } from "../order-actions";
 import { supplierProviderLabel } from "../provider-label";
 import {
 	actSupplierOrderFn,
@@ -200,9 +201,12 @@ export function SupplierOrdersPage() {
 								<DropdownMenuItem
 									disabled={
 										action.isPending ||
-										!row.original.account_id ||
-										row.original.state === "supplied" ||
-										row.original.state === "refunded"
+										!supplierOrderActionAllowed("reconcile", {
+											state: row.original.state,
+											orderStatus: row.original.order_status,
+											accountId: row.original.account_id,
+											accountLockedAt: row.original.account_locked_at,
+										})
 									}
 									onClick={() =>
 										action.mutate({
@@ -219,9 +223,12 @@ export function SupplierOrdersPage() {
 								<DropdownMenuItem
 									disabled={
 										action.isPending ||
-										row.original.state === "uncertain" ||
-										row.original.state === "supplied" ||
-										row.original.state === "refunded"
+										!supplierOrderActionAllowed("reselect", {
+											state: row.original.state,
+											orderStatus: row.original.order_status,
+											accountId: row.original.account_id,
+											accountLockedAt: row.original.account_locked_at,
+										})
 									}
 									onClick={() =>
 										action.mutate({
