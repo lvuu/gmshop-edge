@@ -366,6 +366,15 @@ Replace the credentials and explicitly enable accounts in the admin console for
 integration testing. The script accepts `--local` only, preserves existing
 rows, and cannot write to a remote D1 database.
 
+Dhru acceptance data adds a draft USD 1.00 service and a disabled demo account.
+Customer orders `GMDHRU000001` through `GMDHRU000005` cover waiting for supply,
+processing with a known upstream ID, delivered private results, rejection, and
+manual review after a missing receipt ID. Search `GMDHRU` in supplier orders;
+use the installed root's order page to inspect customer progress and the successful
+result. The service is not purchasable. Seeding creates no supplier outbox work or
+automatic polling schedule, and repeated runs preserve these orders and encrypted
+results. This is local UI acceptance data, not evidence of a real paid Dhru test.
+
 Use `bun run db:generate` only when intentionally changing the Drizzle schema,
 then review the generated migration. Normal development applies migrations; it
 does not regenerate the clean-install baseline. Run `bun run generate-paraglide`

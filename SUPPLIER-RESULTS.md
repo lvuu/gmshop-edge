@@ -257,3 +257,18 @@ Integration checks cover processing/read-failure races, newer completion and rej
 Pending-persistence validation: 760 unit/security, 319 integration and 23 Bun runtime tests passed (1,102 total). Two existing TODO tests remain unexecuted and the manual provider smoke file is skipped. Typecheck, Biome and Workers/Bun builds passed, retaining existing unrelated Biome notices.
 
 待处理采购写入验证：760 项单元及安全测试、319 项集成测试、23 项 Bun 运行时测试通过，共 1,102 项。原有两项 TODO 未执行，真实供应商手工测试文件跳过。类型检查、Biome 及 Workers/Bun 构建通过，保留已有无关 Biome 提示。
+
+
+## Local Dhru acceptance fixtures / 本地 Dhru 验收样例
+
+`bun run seed:local` now also creates a draft USD 1.00 service, a disabled Dhru account at `https://dhru.example.invalid`, one manual binding and five service orders. `GMDHRU000001` waits for supply, `GMDHRU000002` represents processing with a known upstream ID, `GMDHRU000003` has an encrypted successful result and active service entitlement, `GMDHRU000004` represents an authenticated rejection, and `GMDHRU000005` requires manual review because the receipt ID is missing. Search `GMDHRU` in supplier orders or inspect the root owner's customer orders. Processing uses the existing `uncertain` state with a known ID; it is not a new persisted state.
+
+`bun run seed:local` 现在还会生成一个 USD 1.00 的服务草稿、地址为 `https://dhru.example.invalid` 的禁用 Dhru 账号、一个手工绑定及五个服务订单。`GMDHRU000001` 等待供货，`GMDHRU000002` 表示已有上游订单号的处理中，`GMDHRU000003` 包含加密成功结果及已激活服务权益，`GMDHRU000004` 表示已确认拒单，`GMDHRU000005` 因缺少回执订单号而需人工核查。可在供应商订单页搜索 `GMDHRU`，或查看 root 所有者的客户订单。处理中使用已有 `uncertain` 状态并保存已知上游订单号，不增加持久化状态。
+
+The service remains a draft and unavailable for purchase. No procurement outbox event or automatic reconciliation schedule is seeded. Demo credentials, customer input and results use the real encryption envelopes. Repeated runs preserve existing order, delivery, entitlement and input history; the dedicated demo account is disabled again. The local-only CLI guard remains in place and no migration, deployment or live purchase is performed.
+
+演示服务保持草稿且不可购买；不会生成采购 Outbox 事件或自动对账计划。演示凭据、客户输入和结果使用正式加密格式。重复运行保留订单、交付、权益及输入历史，并再次禁用专用演示账号。保留仅允许本地执行的 CLI 限制，本轮不增加迁移、不部署或进行真实采购。
+
+Four D1 integration checks use the complete empty-database migration chain and actual customer/admin queries. They cover all five presentations, missing-ID action guards, authenticated private results, wrong-owner/guest denial, redacted auditing, no stock or automatic provider requests, repeat execution, refund denial and foreign-key integrity. These data checks prepare UI acceptance; they do not replace browser checks of the latest Dhru branch or the approximately USD 1.00 real-provider smoke.
+
+四项 D1 集成检查使用完整空库迁移链及实际客户/后台查询，覆盖五种状态展示、缺号操作限制、授权读取私密结果、错误所有者或访客的拒绝、审计不记录结果正文、不写卡密或自动请求上游、重复生成、退款后拒绝读取及外键完整性。这些数据检查为页面验收准备条件，不能替代最新 Dhru 分支的浏览器检查或约 USD 1.00 的真实供应商测试。
