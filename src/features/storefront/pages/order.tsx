@@ -29,6 +29,7 @@ import { Skeleton } from "#/components/ui/skeleton";
 import { shopOrderStatusLabel } from "#/features/shop-orders/labels";
 import type { ShopOrderStatus } from "#/features/shop-orders/schema";
 import { DeliveryRevealContent } from "#/features/storefront/components/delivery-reveal-content";
+import { ServiceDeliveryStatus } from "#/features/storefront/components/service-delivery-status";
 import {
 	readGuestOrderEmail,
 	writeGuestOrderEmail,
@@ -431,6 +432,9 @@ export function StorefrontOrderPage({
 										) : null}
 									</div>
 								) : null}
+								{data.status === "paid" || data.status === "fulfilling" ? (
+									<ServiceDeliveryStatus deliveries={data.deliveries} />
+								) : null}
 								{data.status !== "pending_payment" &&
 								(claimableDeliveries.length || downloadableAssets.length) ? (
 									<section className="grid gap-4 border-t pt-6">
@@ -593,6 +597,9 @@ function DirectDeliveryContent({
 				<p className="text-muted-foreground text-xs">
 					{delivery.sellableItemName}
 				</p>
+				{delivery.type === "service" ? (
+					<p className="mt-1 text-sm">{m.store_service_result()}</p>
+				) : null}
 			</div>
 			<DeliveryRevealContent
 				className="bg-background/60"

@@ -2,14 +2,18 @@ import { createServerFn } from "@tanstack/react-start";
 import type { z } from "zod";
 import { systemPermission } from "#/features/access/system-rbac";
 import { DomainError } from "#/lib/domain-error";
-import { createAuditStatement } from "#/server/audit";
+import { clientIp } from "#/server/client-ip";
 import { getAdminRuntimeServerContext } from "#/server/context";
+import type { SupplierQueueMessage } from "#/server/queue/types";
+import { supplierOrderActionAllowed } from "../order-actions";
 import { supplierOrderActionSchema, supplierOrderListSchema } from "../schema";
 import { publishPendingSupplierOrders } from "./outbox";
 
 type SupplierOrderAdminRow = {
 	id: string;
 	state: string;
+	order_status: string;
+	account_locked_at: number | null;
 	quantity: number;
 	currency: string;
 	currency_decimals: number;
@@ -44,24 +48,32 @@ export const listSupplierOrdersFn = createServerFn({ method: "GET" })
 		const { db } = await getAdminRuntimeServerContext(
 			systemPermission("suppliers", "read"),
 		);
-		const search = data.search ? `%${data.search}%` : null;
-		const where = search
-			? `WHERE o.order_number LIKE ? OR so.upstream_order_id LIKE ?
+		return listSupplierOrders(db, data);
+	});
+
+export async function listSupplierOrders(
+	db: D1Database,
+	data: z.output<typeof supplierOrderListSchema>,
+) {
+	const search = data.search ? `%${data.search}%` : null;
+	const where = search
+		? `WHERE o.order_number LIKE ? OR so.upstream_order_id LIKE ?
+			   OR so.id LIKE ? OR so.provider_request_no LIKE ?
 			   OR sa.name LIKE ? OR sb.upstream_product_name LIKE ?
 			   OR sb.upstream_sku_name LIKE ?`
-			: "";
-		const bindings = search ? [search, search, search, search, search] : [];
-		const from = `FROM supplier_orders so
+		: "";
+	const bindings = search ? Array<string>(7).fill(search) : [];
+	const from = `FROM supplier_orders so
 		 JOIN shop_orders o ON o.id = so.order_id
 		 JOIN shop_order_items oi ON oi.id = so.order_item_id
 		 JOIN supplier_bindings sb ON sb.id = so.supplier_binding_id
 		 JOIN product_sellable_items psi ON psi.id = sb.sellable_item_id
 		 LEFT JOIN supplier_accounts sa ON sa.id = so.selected_account_id`;
-		const [count, rows] = await db.batch([
-			db.prepare(`SELECT COUNT(*) AS total ${from} ${where}`).bind(...bindings),
-			db
-				.prepare(
-					`SELECT so.id, so.state, so.quantity, so.currency,
+	const [count, rows] = await db.batch([
+		db.prepare(`SELECT COUNT(*) AS total ${from} ${where}`).bind(...bindings),
+		db
+			.prepare(
+				`SELECT so.id, so.state, o.status AS order_status, so.account_locked_at, so.quantity, so.currency,
 					        COALESCE(sa.currency_decimals, psi.currency_decimals, 2)
 					          AS currency_decimals,
 					        so.quoted_unit_cost_minor, so.total_cost_minor,
@@ -71,21 +83,22 @@ export const listSupplierOrdersFn = createServerFn({ method: "GET" })
 					        so.submitted_at, so.supplied_at, so.created_at,
 					        o.id AS order_id, o.order_number,
 					        oi.product_name, oi.sellable_item_name,
-					        sb.provider, sb.normalized_api_origin,
+					        json_extract(so.binding_snapshot_json, '$.provider') AS provider,
+					        json_extract(so.binding_snapshot_json, '$.normalizedApiOrigin') AS normalized_api_origin,
 					        sb.upstream_product_name, sb.upstream_sku_name,
 					        sa.id AS account_id, sa.name AS account_name
 					 ${from} ${where}
 					 ORDER BY so.created_at DESC, so.id DESC LIMIT ? OFFSET ?`,
-				)
-				.bind(...bindings, data.pageSize, data.pageIndex * data.pageSize),
-		]);
-		return {
-			data: (rows?.results ?? []) as SupplierOrderAdminRow[],
-			total: Number(
-				(count?.results[0] as { total?: unknown } | undefined)?.total ?? 0,
-			),
-		};
-	});
+			)
+			.bind(...bindings, data.pageSize, data.pageIndex * data.pageSize),
+	]);
+	return {
+		data: (rows?.results ?? []) as SupplierOrderAdminRow[],
+		total: Number(
+			(count?.results[0] as { total?: unknown } | undefined)?.total ?? 0,
+		),
+	};
+}
 
 export const actSupplierOrderFn = createServerFn({ method: "POST" })
 	.validator((input: z.input<typeof supplierOrderActionSchema>) =>
@@ -95,94 +108,147 @@ export const actSupplierOrderFn = createServerFn({ method: "POST" })
 		const context = await getAdminRuntimeServerContext(
 			systemPermission("suppliers", "test"),
 		);
-		const order = await context.db
-			.prepare(
-				`SELECT id, state, selected_account_id, account_locked_at
-				 FROM supplier_orders WHERE id = ? LIMIT 1`,
-			)
-			.bind(data.id)
-			.first<{
-				id: string;
-				state: string;
-				selected_account_id: string | null;
-				account_locked_at: number | null;
-			}>();
-		if (!order)
-			throw new DomainError(
-				"supplier_order_not_found",
-				404,
-				"Supplier order not found",
-			);
-		if (data.action === "reconcile" && !order.selected_account_id)
-			throw new DomainError(
-				"supplier_order_account_not_selected",
-				409,
-				"Supplier order has no selected account",
-			);
-		if (
-			data.action === "reselect" &&
-			(order.state === "uncertain" || order.account_locked_at !== null)
-		)
-			throw new DomainError(
-				"supplier_order_account_locked",
-				409,
-				"An uncertain supplier order must stay on its selected account",
-			);
-		if (["supplied", "refunded"].includes(order.state))
-			throw new DomainError(
-				"supplier_order_terminal",
-				409,
-				"Supplier order is already terminal",
-			);
-		const now = Date.now();
-		const outboxId = crypto.randomUUID();
-		await context.db.batch([
-			context.db
-				.prepare(
-					`UPDATE supplier_orders SET state = ?,
-					 next_retry_at = ?, last_error_code = NULL, updated_at = ?
-					 WHERE id = ?`,
-				)
-				.bind(
-					data.action === "reselect" ? "pending" : order.state,
-					now,
-					now,
-					data.id,
-				),
-			context.db
-				.prepare(
-					`INSERT INTO outbox_events
-					 (id, event_type, aggregate_type, aggregate_id, idempotency_key,
-					  payload, status, attempt_count, created_at, updated_at)
-					 VALUES (?, 'supplier.requested', 'supplier_order', ?, ?, ?,
-					  'pending', 0, ?, ?)`,
-				)
-				.bind(
-					outboxId,
-					data.id,
-					`supplier-admin-${data.action}:${data.id}:${now}`,
-					JSON.stringify({ supplierOrderId: data.id }),
-					now,
-					now,
-				),
-			createAuditStatement(
-				context.db,
-				context.request,
-				context.currentUser.id,
-				{
-					action: `supplier_order.${data.action}`,
-					targetType: "supplier_order",
-					targetId: data.id,
-					before: order,
-					after: { queued: true },
-				},
-			),
-		]);
-		if (context.env.COMMERCE_QUEUE)
-			await publishPendingSupplierOrders(
-				context.db,
-				context.env.COMMERCE_QUEUE,
-				1,
-			);
-		return { id: data.id, queued: true };
+		const result = await queueSupplierOrderAction(
+			context.db,
+			data,
+			{
+				request: context.request,
+				actorUserId: context.currentUser.id,
+			},
+			context.env.COMMERCE_QUEUE,
+		);
+		return result;
 	});
+
+// The administrative server entry owns permission checks; this helper owns the transaction.
+export async function queueSupplierOrderAction(
+	db: D1Database,
+	rawInput: z.input<typeof supplierOrderActionSchema>,
+	audit: { request: Request; actorUserId: string },
+	queue?: Queue<SupplierQueueMessage>,
+) {
+	const data = supplierOrderActionSchema.parse(rawInput);
+	const order = await db
+		.prepare(`SELECT so.id, so.state, so.selected_account_id,
+	 so.account_locked_at, so.upstream_order_id, so.updated_at,
+	 json_extract(so.binding_snapshot_json, '$.provider') AS provider,
+	 o.status AS order_status FROM supplier_orders so
+	 JOIN shop_orders o ON o.id = so.order_id WHERE so.id = ?`)
+		.bind(data.id)
+		.first<{
+			id: string;
+			state: string;
+			selected_account_id: string | null;
+			account_locked_at: number | null;
+			upstream_order_id: string | null;
+			provider: string;
+			updated_at: number;
+			order_status: string;
+		}>();
+	if (!order)
+		throw new DomainError(
+			"supplier_order_not_found",
+			404,
+			"Supplier order not found",
+		);
+	if (
+		!supplierOrderActionAllowed(data.action, {
+			state: order.state,
+			orderStatus: order.order_status,
+			accountId: order.selected_account_id,
+			accountLockedAt: order.account_locked_at,
+			provider: order.provider,
+			upstreamOrderId: order.upstream_order_id,
+		})
+	)
+		throw new DomainError(
+			data.action === "reconcile" &&
+				order.provider === "dhru" &&
+				order.selected_account_id !== null &&
+				order.upstream_order_id === null &&
+				["submitting", "uncertain"].includes(order.state) &&
+				["paid", "fulfilling"].includes(order.order_status)
+				? "supplier_order_id_missing"
+				: "supplier_order_action_unavailable",
+			409,
+			"Supplier order action is unavailable",
+		);
+	const now = Math.max(Date.now(), order.updated_at + 1);
+	const outboxId = crypto.randomUUID();
+	const eligible =
+		data.action === "reselect"
+			? "so.state IN ('pending', 'selecting', 'failed') AND so.selected_account_id IS NULL AND so.account_locked_at IS NULL AND so.upstream_order_id IS NULL"
+			: "so.state IN ('submitting', 'uncertain') AND so.selected_account_id IS NOT NULL AND (json_extract(so.binding_snapshot_json, '$.provider') <> 'dhru' OR so.upstream_order_id IS NOT NULL)";
+	const results = await db.batch([
+		db
+			.prepare(`INSERT INTO outbox_events
+		 (id, event_type, aggregate_type, aggregate_id, idempotency_key, payload,
+		 status, attempt_count, created_at, updated_at)
+		 SELECT ?, 'supplier.requested', 'supplier_order', so.id, ?, ?, 'pending', 0, ?, ?
+		 FROM supplier_orders so JOIN shop_orders o ON o.id = so.order_id
+		 WHERE so.id = ? AND so.state = ? AND so.updated_at = ?
+		 AND so.selected_account_id IS ? AND so.account_locked_at IS ?
+		 AND so.upstream_order_id IS ? AND ${eligible}
+		 AND o.status IN ('paid', 'fulfilling')`)
+			.bind(
+				outboxId,
+				`supplier-admin-${data.action}:${outboxId}`,
+				JSON.stringify({ supplierOrderId: data.id }),
+				now,
+				now,
+				data.id,
+				order.state,
+				order.updated_at,
+				order.selected_account_id,
+				order.account_locked_at,
+				order.upstream_order_id,
+			),
+		db
+			.prepare(`UPDATE supplier_orders SET state = ?, next_retry_at = ?,
+		 last_error_code = NULL, updated_at = ? WHERE id = ?
+		 AND EXISTS (SELECT 1 FROM outbox_events WHERE id = ?)`)
+			.bind(
+				data.action === "reselect" ? "pending" : order.state,
+				now,
+				now,
+				data.id,
+				outboxId,
+			),
+		db
+			.prepare(`INSERT INTO audit_logs
+		 (id, actor_user_id, action, target_type, target_id, request_id, ip_address, before, after, created_at)
+		 SELECT ?, ?, ?, 'supplier_order', ?, ?, ?, ?, ?, ?
+		 WHERE EXISTS (SELECT 1 FROM outbox_events WHERE id = ?)`)
+			.bind(
+				crypto.randomUUID(),
+				audit.actorUserId,
+				`supplier_order.${data.action}`,
+				data.id,
+				audit.request.headers.get("x-request-id"),
+				clientIp(audit.request),
+				JSON.stringify({
+					state: order.state,
+					selectedAccountId: order.selected_account_id,
+				}),
+				JSON.stringify({ queued: true }),
+				now,
+				outboxId,
+			),
+	]);
+	if (results[0]?.meta.changes !== 1)
+		throw new DomainError(
+			"supplier_order_changed",
+			409,
+			"Supplier order changed; refresh and retry",
+		);
+	let dispatch: "published" | "pending" = "pending";
+	if (queue) {
+		try {
+			const result = await publishPendingSupplierOrders(db, queue, 1, outboxId);
+			if (result.published === 1) dispatch = "published";
+		} catch {
+			// The committed outbox remains authoritative; the scheduler retries delivery.
+		}
+	}
+	return { id: data.id, queued: true, dispatch };
+}

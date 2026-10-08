@@ -18,7 +18,7 @@ describe("account entitlement operations", () => {
 		expect(source).not.toContain("<AutomationEntitlementCard");
 	});
 
-	it("loads download and automation operations in account entitlements", async () => {
+	it("loads download, automation and service operations in account entitlements", async () => {
 		const source = await readFile(
 			resolve("src/features/storefront/pages/account-sections.tsx"),
 			"utf8",
@@ -27,7 +27,9 @@ describe("account entitlement operations", () => {
 		expect(source).toContain("getAccountOrderFn");
 		expect(source).toContain("/downloads/");
 		expect(source).toContain("<AutomationEntitlementCard");
-		expect(source).toContain('["stock", "download", "automation"]');
+		expect(source).toMatch(
+			/\[\s*"stock",\s*"download",\s*"automation",\s*"service",?\s*\]/,
+		);
 		expect(source).toContain("<DeliveryRevealContent");
 		const deliveryContent = await readFile(
 			resolve("src/features/storefront/components/delivery-reveal-content.tsx"),

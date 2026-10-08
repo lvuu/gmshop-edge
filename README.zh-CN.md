@@ -40,6 +40,8 @@ HTTP 响应头 CSP 下会隐藏 nonce 属性，补丁改为读取 `HTMLScriptEle
 
 Cloudflare 部署在 `main` 的 Release 工作流的检查与发布任务成功后自动执行，检出经过检查的同一提交。
 仍支持手动部署，沿用仓库现有 Cloudflare secrets、资源准备和数据库迁移流程。
+自动和手动部署均在准备远程资源和迁移数据库之前执行完整质量检查。
+Dhru 升级与单服务验收步骤见 [DHRU-SERVICE-INTEGRATION.md](DHRU-SERVICE-INTEGRATION.md)。
 
 ## 核心能力
 
@@ -236,7 +238,7 @@ docker compose pull
 docker compose up -d
 ```
 
-源码部署需要 Bun 1.3，并使用 `bun run build:bun` 构建、
+源码部署使用 `.bun-version` 固定的 Bun 版本，并使用 `bun run build:bun` 构建、
 `bun run start:bun` 运行。仓库维护的 `bun run data -- …` CLI 提供 `backup`、
 `restore` 和 `import-cloudflare`；恢复和导入只接受全新或空目标，并在安装数据前完成
 完整性校验。
@@ -339,6 +341,13 @@ bun run seed:local
 `.example.invalid`，自动同步也保持关闭，因此不会请求真实上游；如需联调，请在后台换成
 自己的凭据并显式启用。此脚本仅接受 `--local`，不会清空已有数据，也不能写入远程 D1。
 
+Dhru 验收数据额外包含一个 USD 1.00 的服务草稿和禁用的演示账号。
+订单 `GMDHRU000001` 至 `GMDHRU000005` 分别覆盖等待供货、已有上游订单号的处理中、
+成功交付私密结果、拒单和缺少回执订单号的人工核查。可在供应商订单页搜索 `GMDHRU`，
+通过安装时的 root 账号在客户订单页检查服务进度和成功结果。演示服务不可购买，生成数据
+不会创建采购 Outbox 或自动轮询计划；重复运行保留这些订单及加密结果。这些是本地页面
+验收样例，不能代表已完成真实付费 Dhru 测试。
+
 只有在有意修改 Drizzle Schema 时才使用 `bun run db:generate`，并检查生成的 migration。
 日常开发只应用 migration，不重新生成全新安装基线。在不启动 Vite、但需要导入生成消息的
 检查前，运行 `bun run generate-paraglide`；`src/paraglide` 由工具生成且已忽略。
@@ -352,6 +361,16 @@ bun run check
 bun run build
 bun run build:bun
 ```
+
+`bun run test` 按顺序执行单元/安全、D1 集成和 Bun 运行时三个阶段。
+可用 `bun run test:unit`、`bun run test:integration`、`bun run test:bun-runtime`
+分别运行；`bun run test:vitest` 保留合并运行 Vitest 的入口。详细日志逐用例显示进度。
+D1 测试保持串行，避免多个运行器同时启动 Miniflare 导致初始化失败。
+每个集成用例仍使用独立数据库；助手将每个迁移文件作为一次有序 D1 批处理事务，
+仅在测试工作进程内缓存 SQL 文本。不要对整套测试设置 60/90 秒的总时限。
+CI 的单元/安全、集成、Bun 运行时阶段分别允许 10、30、10 分钟，整个任务允许 45 分钟；
+单个用例与钩子的超时仍会检测真正卡住的测试。Worker 部署预检会等待所有已启动的
+资源检查结束后才返回失败，防止子命令在构建结束后继续运行；预检失败不会执行数据库迁移或 Vite。
 
 确定性自动化测试用于证明应用行为。真实支付、邮件、Telegram 和自动化 Provider smoke
 套件保持手动且无条件跳过；生产验收必须使用部署者自己的基础设施。

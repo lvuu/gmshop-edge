@@ -187,7 +187,7 @@ export class DujiaoNextAdapter implements SupplierAdapter {
 				? {
 						status: "supplied",
 						upstreamOrderId: String(parsed.order_id),
-						cards,
+						fulfillment: { type: "stock", cards },
 					}
 				: {
 						status: "uncertain",

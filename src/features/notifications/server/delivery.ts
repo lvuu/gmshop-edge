@@ -18,7 +18,11 @@ import { loadRuntimeConfig } from "#/server/runtime-config";
 type EmailMessage = z.output<typeof emailMessageSchema>;
 type NotificationAsset = {
 	entitlementId: string;
-	assetType: "stock_secret" | "download_asset" | "automation_artifact";
+	assetType:
+		| "stock_secret"
+		| "download_asset"
+		| "automation_artifact"
+		| "service_result";
 	assetId: string;
 	accessEventType: "email_content_sent" | "link_sent";
 };

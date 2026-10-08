@@ -27,6 +27,7 @@ const adminServerModules = [
 	"src/features/suppliers/server/admin.ts",
 	"src/features/suppliers/server/catalog-admin.ts",
 	"src/features/suppliers/server/orders-admin.ts",
+	"src/features/suppliers/server/service-binding.ts",
 	"src/features/telegram/server/admin.ts",
 	"src/features/users/server/admin.ts",
 ] as const;

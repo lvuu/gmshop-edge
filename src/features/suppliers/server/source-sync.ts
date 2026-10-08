@@ -3,7 +3,7 @@ import { runTrackedTask } from "#/features/operations/server/task-runs";
 import { DomainError } from "#/lib/domain-error";
 import type { RuntimeConfig } from "#/server/runtime-config";
 import type { SupplierProduct } from "../providers/types";
-import type { SupplierProvider } from "../schema";
+import { type SupplierProvider, supplierProviderSchema } from "../schema";
 import {
 	adapterForSupplierAccount,
 	type SupplierAccountRuntimeRow,
@@ -16,7 +16,7 @@ const MAX_CATALOG_PRODUCTS = 10_000;
 
 const cachedCatalogSchema = z.object({
 	version: z.literal(1),
-	provider: z.enum(["acg", "dujiao_next", "gmshop_edge"]),
+	provider: supplierProviderSchema,
 	normalizedApiOrigin: z.string(),
 	protocolVersion: z.string(),
 	syncedAt: z.number().int().nonnegative(),
@@ -67,6 +67,8 @@ export async function syncSupplierSource(input: {
 	now?: number;
 	fetcher?: typeof fetch;
 }) {
+	if (input.source.provider === "dhru")
+		return { skipped: true, reason: "manual_service_binding" } as const;
 	const now = input.now ?? Date.now();
 	const task = await sourceSyncTaskName(input.source, now, input.full);
 	const completed = await input.db

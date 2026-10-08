@@ -7,7 +7,7 @@
 - Product, package, Worker, Bun service, database, and durable resource names
   are `GMShop Edge` / `gmshop-edge`.
 - GMShop is a single-deployment, single-tenant digital-goods store, not a payment
-  gateway. It supports stock, private-download, and automation products.
+  gateway. It supports stock, private-download, automation, and supplier service products.
 - Public and customer surfaces use the normal Header layout. Internal operations
   use `/admin` and permission-driven navigation.
 - GMShop may integrate explicitly approved third-party hosted payment processors,
@@ -32,12 +32,12 @@
 
 ## Domain invariants
 
-- Product types are `stock | download | automation`. Stock atomically allocates
+- Product types are `stock | download | automation | service`. Stock atomically allocates
   encrypted preset text, download grants private files, and automation runs
   deployments, scripts, resource provisioning, or concrete build workflows.
   Automation methods use artifact policy `none | optional | required`. Persist
   history as immutable order, input-definition, pricing, entitlement, and
-  automation snapshots.
+  automation snapshots. Service products use supplier fulfillment and encrypted one-time results, never stock allocation.
 - Fiat values are decimal integer strings in `*_minor`; proportions are `*_bps`;
   timestamps/durations are milliseconds; sizes are bytes. Never use floating
   point for money.

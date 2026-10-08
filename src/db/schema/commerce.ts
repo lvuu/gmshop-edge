@@ -36,7 +36,7 @@ export const products = sqliteTable(
 			.notNull()
 			.default([]),
 		productType: text("product_type", {
-			enum: ["stock", "download", "automation"],
+			enum: ["stock", "download", "automation", "service"],
 		}).notNull(),
 		status: text("status", { enum: ["draft", "active", "trashed"] })
 			.notNull()
@@ -68,7 +68,7 @@ export const products = sqliteTable(
 		),
 		check(
 			"products_product_type_check",
-			sql`${table.productType} IN ('stock', 'download', 'automation')`,
+			sql`${table.productType} IN ('stock', 'download', 'automation', 'service')`,
 		),
 	],
 );
@@ -262,7 +262,7 @@ export const supplierAccounts = sqliteTable(
 	{
 		id: text("id").primaryKey(),
 		provider: text("provider", {
-			enum: ["acg", "dujiao_next", "gmshop_edge"],
+			enum: ["acg", "dujiao_next", "gmshop_edge", "dhru"],
 		}).notNull(),
 		baseUrl: text("base_url").notNull(),
 		normalizedApiOrigin: text("normalized_api_origin").notNull(),
@@ -316,7 +316,7 @@ export const supplierAccounts = sqliteTable(
 		),
 		check(
 			"supplier_accounts_provider_check",
-			sql`${table.provider} IN ('acg', 'dujiao_next', 'gmshop_edge')`,
+			sql`${table.provider} IN ('acg', 'dujiao_next', 'gmshop_edge', 'dhru')`,
 		),
 		check(
 			"supplier_accounts_currency_decimals_check",
@@ -357,7 +357,7 @@ export const supplierBindings = sqliteTable(
 			.notNull()
 			.references(() => productSellableItems.id),
 		provider: text("provider", {
-			enum: ["acg", "dujiao_next", "gmshop_edge"],
+			enum: ["acg", "dujiao_next", "gmshop_edge", "dhru"],
 		}).notNull(),
 		normalizedApiOrigin: text("normalized_api_origin").notNull(),
 		protocolVersion: text("protocol_version").notNull(),
@@ -402,7 +402,7 @@ export const supplierBindings = sqliteTable(
 		),
 		check(
 			"supplier_bindings_provider_check",
-			sql`${table.provider} IN ('acg', 'dujiao_next', 'gmshop_edge')`,
+			sql`${table.provider} IN ('acg', 'dujiao_next', 'gmshop_edge', 'dhru')`,
 		),
 		check(
 			"supplier_bindings_reference_cost_check",
@@ -759,7 +759,7 @@ export const shopOrderItems = sqliteTable(
 		productName: text("product_name").notNull(),
 		deliveryComponentId: text("delivery_component_id").notNull(),
 		deliveryComponentType: text("delivery_component_type", {
-			enum: ["stock", "download", "automation"],
+			enum: ["stock", "download", "automation", "service"],
 		}).notNull(),
 		deliveryComponentVersion: integer("delivery_component_version").notNull(),
 		sellableItemName: text("sellable_item_name").notNull(),
@@ -824,7 +824,13 @@ export const shopOrderItems = sqliteTable(
 		),
 		check(
 			"shop_order_items_delivery_component_type_check",
-			sql`${table.deliveryComponentType} IN ('stock', 'download', 'automation')`,
+			sql`${table.deliveryComponentType} IN ('stock', 'download', 'automation', 'service')`,
+		),
+		check(
+			"shop_order_items_service_policy_check",
+			sql`${table.deliveryComponentType} <> 'service' OR
+			(${table.durationMs} IS NULL AND ${table.usageLimit} IS NULL AND ${table.accessLimit} IS NULL
+			 AND ${table.renewalMode} = 'disabled' AND ${table.renewedFromEntitlementId} IS NULL AND ${table.emailMode} <> 'content')`,
 		),
 		check("shop_order_items_quantity_check", sql`${table.quantity} > 0`),
 		check(
@@ -1209,7 +1215,7 @@ export const customerEntitlements = sqliteTable(
 		sellableItemId: text("sellable_item_id").notNull(),
 		deliveryComponentId: text("delivery_component_id").notNull(),
 		entitlementType: text("entitlement_type", {
-			enum: ["stock", "download", "automation"],
+			enum: ["stock", "download", "automation", "service"],
 		}).notNull(),
 		status: text("status", {
 			enum: ["pending", "active", "expired", "exhausted", "revoked"],
@@ -1240,7 +1246,7 @@ export const customerEntitlements = sqliteTable(
 		),
 		check(
 			"customer_entitlements_type_check",
-			sql`${table.entitlementType} IN ('stock', 'download', 'automation')`,
+			sql`${table.entitlementType} IN ('stock', 'download', 'automation', 'service')`,
 		),
 		check(
 			"customer_entitlements_usage_count_check",
@@ -1325,7 +1331,12 @@ export const entitlementEvents = sqliteTable(
 		sourceType: text("source_type"),
 		sourceId: text("source_id"),
 		assetType: text("asset_type", {
-			enum: ["stock_secret", "download_asset", "automation_artifact"],
+			enum: [
+				"stock_secret",
+				"download_asset",
+				"automation_artifact",
+				"service_result",
+			],
 		}),
 		assetId: text("asset_id"),
 		consumed: integer("consumed", { mode: "boolean" }),
@@ -1454,7 +1465,7 @@ export const deliveryRecords = sqliteTable(
 			.notNull()
 			.references(() => shopOrderItems.id),
 		deliveryType: text("delivery_type", {
-			enum: ["stock", "download", "automation"],
+			enum: ["stock", "download", "automation", "service"],
 		}).notNull(),
 		requestKey: text("request_key"),
 		status: text("status", {
@@ -1484,7 +1495,7 @@ export const deliveryRecords = sqliteTable(
 		),
 		check(
 			"delivery_records_type_check",
-			sql`${table.deliveryType} IN ('stock', 'download', 'automation')`,
+			sql`${table.deliveryType} IN ('stock', 'download', 'automation', 'service')`,
 		),
 		check(
 			"delivery_records_attempt_count_check",
@@ -2214,7 +2225,12 @@ export const notificationDeliveries = sqliteTable(
 			() => customerEntitlements.id,
 		),
 		assetType: text("asset_type", {
-			enum: ["stock_secret", "download_asset", "automation_artifact"],
+			enum: [
+				"stock_secret",
+				"download_asset",
+				"automation_artifact",
+				"service_result",
+			],
 		}),
 		assetId: text("asset_id"),
 		accessEventType: text("access_event_type", {

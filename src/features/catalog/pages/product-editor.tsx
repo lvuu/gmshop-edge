@@ -59,6 +59,7 @@ import {
 } from "#/features/catalog/server/editor";
 import { getStoreCurrencyConfigurationFn } from "#/features/exchange-rates/server/public";
 import { ProductDownloadAssets } from "#/features/fulfillment/pages/download-assets";
+import { ServiceBindingForm } from "#/features/suppliers/components/service-binding-form";
 import { PageHeader } from "#/layouts/components/page-header";
 import { formatDateTime, formatMinorAmount, formatNumber } from "#/lib/format";
 import { formatMinorInput, parseMajorInput } from "#/lib/money-input";
@@ -105,6 +106,7 @@ export function ProductEditorPage({
 	const [components, setComponents] = useState<Component[]>([]);
 	const [productType, setProductType] =
 		useState<Component["type"]>(initialProductType);
+	const [bindingBusy, setBindingBusy] = useState(false);
 	const [revision, setRevision] = useState(1);
 	const [name, setName] = useState("");
 	const [description, setDescription] = useState("");
@@ -510,149 +512,181 @@ export function ProductEditorPage({
 		<ProForm
 			className="mx-auto flex min-h-0 w-full max-w-[1360px] flex-1 flex-col [&>div:first-child]:mb-0 [&>div:first-child]:flex [&>div:first-child]:min-h-0 [&>div:first-child]:flex-1 [&>div:first-child]:flex-col"
 			onFinish={async () => {
-				await save.mutateAsync();
+				if (!bindingBusy) await save.mutateAsync();
 			}}
 			onFinishFailed={showError}
 			submitter={false}
 		>
-			<div className="z-20 -mx-4 shrink-0 border-b bg-background px-4 pb-4">
-				<PageHeader
-					actions={
-						<div className="flex flex-wrap justify-end gap-2">
-							<ProButton disabled={save.isPending} type="submit">
-								<Save />
-								{m.catalog_editor_save()}
-							</ProButton>
-							{current ? (
-								<ProButton
-									disabled={
-										publish.isPending ||
-										(current.product.status !== "active" &&
-											!current.publishCheck.canPublish)
-									}
-									onClick={() =>
-										publish.mutate(current.product.status !== "active")
-									}
-									type="button"
-									variant={
-										current.product.status === "active" ? "outline" : "default"
-									}
-								>
-									<Send />
-									{current.product.status === "active"
-										? m.catalog_editor_unpublish()
-										: m.catalog_editor_publish()}
+			<fieldset disabled={bindingBusy} className="contents">
+				<div className="z-20 -mx-4 shrink-0 border-b bg-background px-4 pb-4">
+					<PageHeader
+						actions={
+							<div className="flex flex-wrap justify-end gap-2">
+								<ProButton disabled={save.isPending} type="submit">
+									<Save />
+									{m.catalog_editor_save()}
 								</ProButton>
-							) : null}
-						</div>
-					}
-					description={m.catalog_editor_revision({ revision })}
-					title={name || m.catalog_editor_title()}
-				/>
-			</div>
-			<div className="-mx-1 min-h-0 flex-1 overflow-y-auto overscroll-contain px-1 pt-6 pb-2">
-				<div className="grid min-w-0 items-start gap-8 xl:grid-cols-[minmax(280px,2fr)_minmax(0,3fr)]">
-					<div className="grid min-w-0 gap-6">
-						<ProductCoverField
-							currentUrl={cover?.url}
-							onChange={(value) => setCoverUpload(String(value ?? ""))}
-							value={coverUpload}
-						/>
-						<GalleryEditor
-							media={media.data ?? []}
-							onPendingChange={setGalleryUploads}
-							pendingCount={galleryUploads.length}
-							productId={editorProductId}
-						/>
-					</div>
-					<div className="grid min-w-0 gap-6">
-						<div className="grid gap-4 sm:grid-cols-2">
-							<FormItem label={m.common_name()} required>
-								<Input
-									maxLength={160}
-									onChange={(event) => setName(event.target.value)}
-									required
-									value={name}
-								/>
-							</FormItem>
-							<FormItem
-								label={m.catalog_tags()}
-								tooltip={m.catalog_tags_tooltip()}
-							>
-								<ProSelect
-									allowCreate
-									caseSensitiveValues
-									createControl="input"
-									multiple
-									onChange={(value) =>
-										setTagNames(Array.isArray(value) ? value : [])
-									}
-									options={[
-										...new Set([...availableTagNames, ...tagNames]),
-									].map((tag) => ({ label: tag, value: tag }))}
-									searchable
-									value={tagNames}
-								/>
-							</FormItem>
-						</div>
-						<FormItem label={m.catalog_description()}>
-							<ProEditor
-								height={240}
-								language="plaintext"
-								onChange={setDescription}
-								toolbarFormat={false}
-								toolbarTitle={m.catalog_description()}
-								value={description}
+								{current ? (
+									<ProButton
+										disabled={
+											publish.isPending ||
+											(current.product.status !== "active" &&
+												!current.publishCheck.canPublish)
+										}
+										onClick={() =>
+											publish.mutate(current.product.status !== "active")
+										}
+										type="button"
+										variant={
+											current.product.status === "active"
+												? "outline"
+												: "default"
+										}
+									>
+										<Send />
+										{current.product.status === "active"
+											? m.catalog_editor_unpublish()
+											: m.catalog_editor_publish()}
+									</ProButton>
+								) : null}
+							</div>
+						}
+						description={m.catalog_editor_revision({ revision })}
+						title={name || m.catalog_editor_title()}
+					/>
+				</div>
+				<div className="-mx-1 min-h-0 flex-1 overflow-y-auto overscroll-contain px-1 pt-6 pb-2">
+					<div className="grid min-w-0 items-start gap-8 xl:grid-cols-[minmax(280px,2fr)_minmax(0,3fr)]">
+						<div className="grid min-w-0 gap-6">
+							<ProductCoverField
+								currentUrl={cover?.url}
+								onChange={(value) => setCoverUpload(String(value ?? ""))}
+								value={coverUpload}
 							/>
-						</FormItem>
-						<SellableItemsEditor
-							components={components}
-							onComponentsChange={setComponents}
-							onPendingCardImportChange={(id, pendingImport) =>
-								setPendingCardImports((current) => ({
-									...current,
-									[id]: pendingImport,
-								}))
-							}
-							onPendingBuildChange={(id, draft) =>
-								setPendingBuilds((current) => ({
-									...current,
-									[id]: draft,
-								}))
-							}
-							onPendingDownloadsChange={(id, downloads) =>
-								setPendingDownloads((current) => ({
-									...current,
-									[id]: downloads,
-								}))
-							}
-							onSellableItemsChange={setSellableItems}
-							pendingCardImports={pendingCardImports}
-							pendingBuilds={pendingBuilds}
-							pendingDownloads={pendingDownloads}
-							persistedIds={
-								new Set(
-									current?.components.map((component) => component.id) ?? [],
-								)
-							}
-							productId={editorProductId}
-							productType={productType}
-							sellableItems={sellableItems}
-							baseCurrency={currencyConfiguration.data?.baseCurrency ?? "USD"}
-							currencySymbol={
-								currencyConfiguration.data?.baseCurrencySymbol ?? "$"
-							}
-						/>
-						{current ? (
-							<PublishCheck check={current.publishCheck} />
-						) : (
-							<p className="text-muted-foreground text-sm">
-								{m.catalog_editor_publish_after_save()}
-							</p>
-						)}
+							<GalleryEditor
+								media={media.data ?? []}
+								onPendingChange={setGalleryUploads}
+								pendingCount={galleryUploads.length}
+								productId={editorProductId}
+							/>
+						</div>
+						<div className="grid min-w-0 gap-6">
+							<div className="grid gap-4 sm:grid-cols-2">
+								<FormItem label={m.common_name()} required>
+									<Input
+										maxLength={160}
+										onChange={(event) => setName(event.target.value)}
+										required
+										value={name}
+									/>
+								</FormItem>
+								<FormItem
+									label={m.catalog_tags()}
+									tooltip={m.catalog_tags_tooltip()}
+								>
+									<ProSelect
+										allowCreate
+										caseSensitiveValues
+										createControl="input"
+										multiple
+										onChange={(value) =>
+											setTagNames(Array.isArray(value) ? value : [])
+										}
+										options={[
+											...new Set([...availableTagNames, ...tagNames]),
+										].map((tag) => ({ label: tag, value: tag }))}
+										searchable
+										value={tagNames}
+									/>
+								</FormItem>
+							</div>
+							<FormItem label={m.catalog_description()}>
+								<ProEditor
+									height={240}
+									language="plaintext"
+									onChange={setDescription}
+									toolbarFormat={false}
+									toolbarTitle={m.catalog_description()}
+									value={description}
+								/>
+							</FormItem>
+							<SellableItemsEditor
+								components={components}
+								onComponentsChange={setComponents}
+								onPendingCardImportChange={(id, pendingImport) =>
+									setPendingCardImports((current) => ({
+										...current,
+										[id]: pendingImport,
+									}))
+								}
+								onPendingBuildChange={(id, draft) =>
+									setPendingBuilds((current) => ({
+										...current,
+										[id]: draft,
+									}))
+								}
+								onPendingDownloadsChange={(id, downloads) =>
+									setPendingDownloads((current) => ({
+										...current,
+										[id]: downloads,
+									}))
+								}
+								onSellableItemsChange={setSellableItems}
+								pendingCardImports={pendingCardImports}
+								pendingBuilds={pendingBuilds}
+								pendingDownloads={pendingDownloads}
+								persistedIds={
+									new Set(
+										current?.components.map((component) => component.id) ?? [],
+									)
+								}
+								productId={editorProductId}
+								productType={productType}
+								sellableItems={sellableItems}
+								baseCurrency={currencyConfiguration.data?.baseCurrency ?? "USD"}
+								currencySymbol={
+									currencyConfiguration.data?.baseCurrencySymbol ?? "$"
+								}
+							/>
+							{current && productType === "service" ? (
+								<ServiceBindingForm
+									items={current.sellableItems}
+									revision={revision}
+									disabled={
+										save.isPending ||
+										publish.isPending ||
+										name !== current.product.name ||
+										description !== (current.product.description ?? "") ||
+										JSON.stringify(tagNames) !==
+											JSON.stringify(current.product.tagNames) ||
+										JSON.stringify(sellableItems) !==
+											JSON.stringify(current.sellableItems) ||
+										JSON.stringify(components) !==
+											JSON.stringify(current.components) ||
+										!!coverUpload ||
+										galleryUploads.length > 0
+									}
+									onBusy={setBindingBusy}
+									onBound={async () => {
+										await query.refetch();
+										await client.invalidateQueries({
+											queryKey: ["admin", "catalog"],
+										});
+									}}
+								/>
+							) : null}
+
+							{current ? (
+								<PublishCheck check={current.publishCheck} />
+							) : (
+								<p className="text-muted-foreground text-sm">
+									{m.catalog_editor_publish_after_save()}
+								</p>
+							)}
+						</div>
 					</div>
 				</div>
-			</div>
+			</fieldset>
 		</ProForm>
 	);
 }
@@ -905,7 +939,7 @@ function SellableItemsEditor({
 								)
 							}
 						/>
-						{component ? (
+						{component && component.type !== "service" ? (
 							<div className="w-36">
 								<EntitlementPresetSelect
 									component={component}
@@ -1077,7 +1111,7 @@ function SellableItemsEditor({
 									value={sellableItem.maximumPerCustomer ?? ""}
 								/>
 							</FormItem>
-							{component ? (
+							{component && component.type !== "service" ? (
 								<FormItem
 									label={m.catalog_duration_ms()}
 									tooltip={m.catalog_duration_ms_tooltip()}
@@ -1266,7 +1300,10 @@ function ComponentEditor({
 				</div>
 			) : null}
 			{sellableItem.fulfillmentSource === "supplier" ? (
-				<SupplierFulfillmentPanel sellableItem={sellableItem} />
+				<SupplierFulfillmentPanel
+					sellableItem={sellableItem}
+					service={component.type === "service"}
+				/>
 			) : persistedIds.has(component.id) ? (
 				<ComponentOperations component={component} productId={productId} />
 			) : (
@@ -1284,8 +1321,10 @@ function ComponentEditor({
 
 function SupplierFulfillmentPanel({
 	sellableItem,
+	service,
 }: {
 	sellableItem: SellableItem;
+	service: boolean;
 }) {
 	const binding = sellableItem.supplierBinding;
 	return (
@@ -1296,31 +1335,39 @@ function SupplierFulfillmentPanel({
 						{m.catalog_supplier_fulfillment()}
 					</p>
 					<p className="text-muted-foreground text-sm">
-						{m.catalog_supplier_fulfillment_description()}
+						{service
+							? m.catalog_service_fulfillment_description()
+							: m.catalog_supplier_fulfillment_description()}
 					</p>
 				</div>
-				<ProButton asChild size="sm" variant="outline">
-					<Link
-						search={
-							binding
-								? {
-										q: binding.upstreamSkuId,
-										source: `${binding.provider}:${binding.normalizedApiOrigin}`,
-									}
-								: {}
-						}
-						to="/admin/suppliers/products"
-					>
-						{m.catalog_supplier_manage_binding()}
-						<ChevronRight />
-					</Link>
-				</ProButton>
+				{!service ? (
+					<ProButton asChild size="sm" variant="outline">
+						<Link
+							search={
+								binding
+									? {
+											q: binding.upstreamSkuId,
+											source: `${binding.provider}:${binding.normalizedApiOrigin}`,
+										}
+									: {}
+							}
+							to="/admin/suppliers/products"
+						>
+							{m.catalog_supplier_manage_binding()}
+							<ChevronRight />
+						</Link>
+					</ProButton>
+				) : null}
 			</div>
 			{binding ? (
 				<div className="grid gap-3 rounded-md bg-muted/40 p-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
 					<ReadOnlyDetail
 						label={m.supplier_upstream_details()}
-						value={`${binding.upstreamProductName} · ${binding.upstreamSkuName}`}
+						value={
+							service
+								? binding.upstreamProductName
+								: `${binding.upstreamProductName} · ${binding.upstreamSkuName}`
+						}
 					/>
 					<ReadOnlyDetail
 						label={m.supplier_cost()}
@@ -1330,10 +1377,12 @@ function SupplierFulfillmentPanel({
 							sellableItem.currencyDecimals,
 						)}
 					/>
-					<ReadOnlyDetail
-						label={m.supplier_stock()}
-						value={formatNumber(binding.stockQuantity)}
-					/>
+					{!service ? (
+						<ReadOnlyDetail
+							label={m.supplier_stock()}
+							value={formatNumber(binding.stockQuantity)}
+						/>
+					) : null}
 					<ReadOnlyDetail
 						label={m.common_status()}
 						value={supplierFulfillmentStatusLabel(sellableItem.supplierStatus)}
@@ -1748,7 +1797,7 @@ function newComponent(type: Component["type"]): Component {
 		durationMs: null,
 		usageLimit: null,
 		accessLimit: null,
-		renewalMode: "stack",
+		renewalMode: type === "service" ? "disabled" : "stack",
 		emailMode: "none",
 		showOnOrderPage: true,
 		allowResend: true,
@@ -1989,6 +2038,8 @@ function presetPolicy(
 	return {};
 }
 function entitlementPresetOptions(type: Component["type"]) {
+	if (type === "service")
+		return [{ label: m.catalog_preset_custom(), value: "custom" }];
 	return [
 		{
 			label: m.catalog_preset_permanent_unlimited(),

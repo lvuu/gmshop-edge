@@ -17,6 +17,7 @@ jobs:
   quality:
     name: Quality gate
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -41,11 +42,29 @@ jobs:
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
 
-      - name: Run quality gate
-        run: |
-          bun run generate-paraglide
-          bun run typecheck
-          bun run test
-          bun run check
-          bun run build
-          bun run build:bun
+      - name: Generate translations
+        run: bun run generate-paraglide
+
+      - name: Check types
+        run: bun run typecheck
+
+      - name: Check formatting and lint
+        run: bun run check
+
+      - name: Run unit and security tests
+        timeout-minutes: 10
+        run: bun run test:unit
+
+      - name: Run isolated D1 integration tests
+        timeout-minutes: 30
+        run: bun run test:integration
+
+      - name: Run Bun runtime tests
+        timeout-minutes: 10
+        run: bun run test:bun-runtime
+
+      - name: Build Workers
+        run: bun run build
+
+      - name: Build Bun
+        run: bun run build:bun

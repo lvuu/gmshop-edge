@@ -1,8 +1,9 @@
 "use client";
 
 import { Copy } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { CopyButton } from "#/components/pro/base/button";
+import { Button } from "#/components/ui/button";
 import { Skeleton } from "#/components/ui/skeleton";
 import { cn } from "#/lib/utils";
 import { m } from "#/paraglide/messages";
@@ -20,31 +21,50 @@ export function DeliveryRevealContent({
 	className?: string;
 	skeletonClassName?: string;
 }) {
-	const requested = useRef(false);
-	const [content, setContent] = useState("");
-	const [failed, setFailed] = useState(false);
+	const [attempt, setAttempt] = useState(0);
+	const [result, setResult] = useState<{
+		key: string;
+		content: string | null;
+		failed: boolean;
+	} | null>(null);
 	const endpoint = `/api/shop/orders/${encodeURIComponent(orderNumber)}/deliveries/${encodeURIComponent(deliveryId)}/reveal`;
+	const requestKey = JSON.stringify([endpoint, email ?? null, attempt]);
+	const current = result?.key === requestKey ? result : null;
 
 	useEffect(() => {
-		if (requested.current) return;
-		requested.current = true;
-		void fetch(endpoint, revealRequest(email))
+		const controller = new AbortController();
+		void fetch(endpoint, { ...revealRequest(email), signal: controller.signal })
 			.then(async (response) => {
 				if (!response.ok) throw new Error("delivery_reveal_failed");
 				const body = (await response.json()) as { content?: unknown };
-				if (typeof body.content !== "string")
+				if (typeof body.content !== "string" || !body.content.trim())
 					throw new Error("delivery_reveal_failed");
-				setContent(body.content);
+				if (!controller.signal.aborted)
+					setResult({ key: requestKey, content: body.content, failed: false });
 			})
-			.catch(() => setFailed(true));
-	}, [email, endpoint]);
+			.catch(() => {
+				if (!controller.signal.aborted)
+					setResult({ key: requestKey, content: null, failed: true });
+			});
+		return () => controller.abort();
+	}, [email, endpoint, requestKey]);
 
-	if (failed)
+	if (current?.failed)
 		return (
-			<p className="text-destructive text-sm">
-				{m.store_delivery_reveal_failed()}
-			</p>
+			<div className="flex flex-wrap items-center gap-3">
+				<p role="alert" className="text-destructive text-sm">
+					{m.store_delivery_reveal_failed()}
+				</p>
+				<Button
+					size="sm"
+					variant="outline"
+					onClick={() => setAttempt((value) => value + 1)}
+				>
+					{m.common_retry()}
+				</Button>
+			</div>
 		);
+	const content = current?.content;
 	if (!content)
 		return (
 			<Skeleton className={cn("h-12 w-full rounded-xl", skeletonClassName)} />
@@ -63,7 +83,11 @@ export function DeliveryRevealContent({
 				aria-label={m.store_copy_delivery()}
 				copy={content}
 				icon={<Copy />}
-				onClick={() => void fetch(endpoint, revealRequest(email, "copied"))}
+				onClick={() =>
+					void fetch(endpoint, revealRequest(email, "copied")).catch(
+						() => undefined,
+					)
+				}
 				size="icon-sm"
 				tooltip={m.store_copy_delivery()}
 				variant="ghost"

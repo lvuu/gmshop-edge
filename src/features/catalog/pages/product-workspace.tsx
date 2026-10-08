@@ -235,6 +235,7 @@ function productStatus(status: "draft" | "active" | "trashed") {
 }
 
 function deliveryTypeLabel(type: string) {
+	if (type === "service") return m.catalog_product_type_service();
 	if (type === "stock") return m.catalog_product_type_stock();
 	if (type === "download") return m.catalog_product_type_download();
 	return m.catalog_product_type_automation();

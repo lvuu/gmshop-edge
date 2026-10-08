@@ -68,6 +68,16 @@ async function processMessage(
 		message.ack();
 		return "completed";
 	} catch (error) {
+		if (
+			message.body.kind === "commerce.supplier" &&
+			error instanceof DomainError &&
+			error.code === "supplier_order_pending"
+		) {
+			// The worker persisted either a due poll or a manual hold before throwing.
+			// Normal upstream processing must not exhaust the transport retry budget.
+			message.ack();
+			return "completed";
+		}
 		if (error instanceof DomainError && isPermanentFailure(error)) {
 			// Domain rejections (record already in a terminal state, requires an
 			// operator, invalid subject) cannot succeed on retry; record them and

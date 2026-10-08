@@ -36,7 +36,7 @@ describe("catalog product type invariant", { timeout: 30_000 }, () => {
 
 	afterAll(async () => miniflare.dispose());
 
-	it("accepts stock, download, and automation product types only", async () => {
+	it("accepts the four product types and rejects unknown types", async () => {
 		await expect(
 			db
 				.prepare(
@@ -79,7 +79,7 @@ describe("catalog product type invariant", { timeout: 30_000 }, () => {
 		).rejects.toMatchObject({ code: "product_type_configuration_mismatch" });
 	});
 
-	it("allows supplier fulfillment only on stock products", async () => {
+	it("allows supplier fulfillment on stock and service products", async () => {
 		await expect(
 			db
 				.prepare(

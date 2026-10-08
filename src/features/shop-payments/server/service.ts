@@ -75,6 +75,7 @@ type OrderItem = EntitlementOrderItem & {
 	reference_cost_minor: string | null;
 	max_cost_minor: string | null;
 	supplier_currency: string | null;
+	supplier_currency_decimals: number;
 };
 
 const createPaymentSchema = z.object({
@@ -1460,16 +1461,20 @@ function fulfillmentStatements(
 	// the caller's transition statement, so nothing is reserved or created when
 	// that transition did not apply (expired/cancelled/already paid order).
 	const paidOrderSql = `FROM shop_orders WHERE id = ? AND status = 'paid' AND version = ?`;
-	const supplierStock =
-		item.delivery_component_type === "stock" &&
+	const supplierFulfillment =
+		(item.delivery_component_type === "stock" ||
+			item.delivery_component_type === "service") &&
 		item.fulfillment_source === "supplier";
-	if (supplierStock && !supplierBindingReady(item))
+	if (
+		(item.delivery_component_type === "service" && !supplierFulfillment) ||
+		(supplierFulfillment && !supplierBindingReady(item))
+	)
 		throw new DomainError(
 			"supplier_binding_unavailable",
 			409,
 			"Supplier binding unavailable",
 		);
-	if (item.delivery_component_type === "stock" && !supplierStock) {
+	if (item.delivery_component_type === "stock" && !supplierFulfillment) {
 		statements.push(
 			db
 				.prepare(
@@ -1492,14 +1497,35 @@ function fulfillmentStatements(
 				),
 		);
 	}
-	if (item.delivery_component_type === "stock") {
-		statements.push(
-			db
-				.prepare(
-					`INSERT INTO delivery_records
+	if (
+		item.delivery_component_type === "stock" ||
+		item.delivery_component_type === "service"
+	) {
+		if (item.delivery_component_type === "service") {
+			statements.push(
+				db
+					.prepare(`INSERT INTO delivery_records
+			 (id, order_item_id, delivery_type, request_key, status, attempt_count, next_attempt_at, created_at, updated_at)
+			 SELECT ?, ?, 'service', ?, 'awaiting_supply', 0, ?, ?, ? ${paidOrderSql}`)
+					.bind(
+						deliveryId,
+						item.id,
+						`initial:${item.id}`,
+						now,
+						now,
+						now,
+						orderId,
+						orderVersion,
+					),
+			);
+		} else
+			statements.push(
+				db
+					.prepare(
+						`INSERT INTO delivery_records
 					 (id, order_item_id, delivery_type, request_key, status, attempt_count, next_attempt_at,
 					  error_code, created_at, updated_at)
-					 SELECT ?, ?, 'stock', ?,
+					 SELECT ?, ?, ?, ?,
 				  CASE WHEN ? = 1 THEN 'awaiting_supply'
 				   WHEN (SELECT COUNT(*) FROM stock_entries WHERE order_item_id = ? AND status = 'reserved') = ? THEN 'pending'
 				   ELSE 'failed' END,
@@ -1508,25 +1534,26 @@ function fulfillmentStatements(
 				   WHEN (SELECT COUNT(*) FROM stock_entries WHERE order_item_id = ? AND status = 'reserved') = ? THEN NULL
 				   ELSE 'inventory_unavailable' END,
 				  ?, ? ${paidOrderSql}`,
-				)
-				.bind(
-					deliveryId,
-					item.id,
-					`initial:${item.id}`,
-					supplierStock,
-					item.id,
-					item.quantity,
-					now,
-					supplierStock,
-					item.id,
-					item.quantity,
-					now,
-					now,
-					orderId,
-					orderVersion,
-				),
-		);
-		if (supplierStock) {
+					)
+					.bind(
+						deliveryId,
+						item.id,
+						item.delivery_component_type,
+						`initial:${item.id}`,
+						supplierFulfillment,
+						item.id,
+						item.quantity,
+						now,
+						supplierFulfillment,
+						item.id,
+						item.quantity,
+						now,
+						now,
+						orderId,
+						orderVersion,
+					),
+			);
+		if (supplierFulfillment) {
 			const totalCostMinor = (
 				BigInt(item.reference_cost_minor ?? "0") * BigInt(item.quantity)
 			).toString();
@@ -1554,6 +1581,10 @@ function fulfillmentStatements(
 						item.supplier_currency,
 						JSON.stringify({
 							provider: item.supplier_provider,
+							currencyDecimals:
+								item.delivery_component_type === "service"
+									? item.supplier_currency_decimals
+									: undefined,
 							normalizedApiOrigin: item.supplier_origin,
 							protocolVersion: item.supplier_protocol,
 							upstreamProductId: item.upstream_product_id,
@@ -1658,13 +1689,13 @@ function fulfillmentStatements(
 			)
 			.bind(
 				crypto.randomUUID(),
-				supplierStock ? "supplier.requested" : "delivery.requested",
-				supplierStock ? "supplier_order" : "delivery",
-				supplierStock ? supplierOrderId : deliveryId,
-				supplierStock
+				supplierFulfillment ? "supplier.requested" : "delivery.requested",
+				supplierFulfillment ? "supplier_order" : "delivery",
+				supplierFulfillment ? supplierOrderId : deliveryId,
+				supplierFulfillment
 					? `supplier-requested:${supplierOrderId}`
 					: `delivery-requested:${deliveryId}`,
-				supplierStock
+				supplierFulfillment
 					? JSON.stringify({ supplierOrderId })
 					: JSON.stringify({ deliveryId, orderItemId: item.id }),
 				now,
@@ -1684,12 +1715,14 @@ const orderItemsForFulfillmentSql = `SELECT
  sb.id AS supplier_binding_id, sb.provider AS supplier_provider,
  sb.normalized_api_origin AS supplier_origin,
  sb.protocol_version AS supplier_protocol,
+ (SELECT currency_decimals FROM shop_orders WHERE id = oi.order_id) AS supplier_currency_decimals,
  sb.upstream_product_id, sb.upstream_sku_id, sb.upstream_product_name,
  sb.upstream_sku_name, sb.reference_cost_minor, sb.max_cost_minor,
  (SELECT sa.currency FROM supplier_accounts sa
   WHERE sa.provider = sb.provider
    AND sa.normalized_api_origin = sb.normalized_api_origin
    AND sa.protocol_version = sb.protocol_version
+   AND (oi.delivery_component_type <> 'service' OR (sa.currency = psi.currency AND sa.currency_decimals = psi.currency_decimals))
   ORDER BY sa.enabled DESC, sa.id LIMIT 1) AS supplier_currency
  FROM shop_order_items oi
  JOIN product_sellable_items psi ON psi.id = oi.sellable_item_id

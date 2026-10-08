@@ -642,6 +642,8 @@ function deliveryPromise(type: SellableItem["deliveryType"]) {
 			return m.store_delivery_promise_download();
 		case "automation":
 			return m.store_delivery_promise_build();
+		case "service":
+			return m.store_delivery_promise_service();
 		default:
 			return null;
 	}

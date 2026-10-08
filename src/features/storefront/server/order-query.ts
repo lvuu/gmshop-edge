@@ -148,9 +148,19 @@ export async function getStoreOrder(
 			.bind(order.id),
 		db
 			.prepare(
-				`SELECT dr.id, grant_row.entitlement_id, dr.delivery_type, dr.status,
+				`SELECT dr.id, grant_row.entitlement_id, dr.delivery_type,
+				 CASE WHEN dr.delivery_type = 'service' AND dr.status = 'awaiting_supply'
+				 AND EXISTS (SELECT 1 FROM supplier_orders so
+				  WHERE so.order_item_id = dr.order_item_id
+				  AND so.delivery_record_id = dr.id AND so.state = 'failed')
+				 THEN 'failed' ELSE dr.status END AS status,
 				 dr.error_code, dr.delivered_at,
-				 dr.content_encrypted IS NOT NULL AS has_content,
+				 dr.content_encrypted IS NOT NULL AND
+				 (dr.delivery_type <> 'service' OR (grant_row.status = 'active'
+				 AND EXISTS (SELECT 1 FROM customer_entitlements ce
+				  JOIN shop_orders o ON o.id = oi.order_id
+				  WHERE ce.id = grant_row.entitlement_id AND ce.status = 'active'
+				  AND o.status IN ('completed', 'fulfilling')))) AS has_content,
 				 oi.show_on_order_page, oi.product_name, oi.sellable_item_name
 				 FROM delivery_records dr
 				 JOIN shop_order_items oi ON oi.id = dr.order_item_id

@@ -408,7 +408,7 @@ describe("ACG adapter", () => {
 		).resolves.toMatchObject({
 			status: "supplied",
 			upstreamOrderId: "trade-123",
-			cards: ["CARD-1", "CARD-2"],
+			fulfillment: { type: "stock", cards: ["CARD-1", "CARD-2"] },
 		});
 		expect(bodies[0]).toContain("trade_no=trade-123");
 	});

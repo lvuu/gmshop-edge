@@ -104,7 +104,11 @@ export class AcgAdapter implements SupplierAdapter {
 		);
 		const cards = parseCards(data.contents ?? "");
 		return cards.length
-			? { status: "supplied", upstreamOrderId: input.requestNo, cards }
+			? {
+					status: "supplied",
+					upstreamOrderId: input.requestNo,
+					fulfillment: { type: "stock", cards },
+				}
 			: { status: "processing", upstreamOrderId: input.requestNo };
 	}
 

@@ -30,6 +30,7 @@ import {
 	supplierCredentialFingerprint,
 } from "#/features/suppliers/secrets";
 import { decryptSecret, encryptSecret } from "#/lib/secrets";
+import { createDhruAcceptanceStatements } from "./seed-dhru-fixtures";
 
 const databaseName = "gmshop-edge";
 const bucketName = "gmshop-edge-files";
@@ -730,6 +731,14 @@ for (const suffix of [4, 54, 60, 78, 79, 80, 81] as const)
 
 await addCustomerPurchaseFixtures(sql);
 await addSupplierFixtures(sql);
+sql.push(
+	...(await createDhruAcceptanceStatements({
+		now,
+		customerUserId,
+		customerEmail,
+		commerceSecret,
+	})),
+);
 await executeSql(sql.join(";\n"));
 for (const catalog of supplierCatalogFixtures)
 	await putKvValue(
@@ -738,6 +747,9 @@ for (const catalog of supplierCatalogFixtures)
 		86_400,
 	);
 const telegramUser = await seedTelegramMiniAppUser();
+console.log(
+	"Added a draft USD 1.00 Dhru demo service, a disabled demo account, and five service orders (GMDHRU000001–GMDHRU000005). No supplier work is queued.",
+);
 console.log(
 	`Seeded ${paymentChannels.length} payment channels, ${products.length} example products, ${items.length} sellable items, ${customerPurchases.length} customer purchases, 3 disabled supplier accounts, 3 supplier bindings, 3 supplier orders, ${supplierCatalogFixtures.length} supplier catalog snapshots, and Telegram user ${String(telegramUser.name ?? telegramUserId)} for ${customerEmail}.${withR2 ? ` Added ${mediaFixtures.length} media objects, ${downloadFixtures.length} download objects, and one automation artifact.` : " Download products remain drafts; run with --with-r2 or upload their files in the admin UI before publishing."}\nLocal root login: ${customerEmail} / ${customerPassword}`,
 );

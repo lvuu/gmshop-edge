@@ -4,6 +4,7 @@ export const supplierProviderSchema = z.enum([
 	"acg",
 	"dujiao_next",
 	"gmshop_edge",
+	"dhru",
 ]);
 export type SupplierProvider = z.infer<typeof supplierProviderSchema>;
 
@@ -11,6 +12,7 @@ export const supplierProtocolVersions = {
 	acg: "3.5.5-v4",
 	dujiao_next: "1.3.1-upstream-v1",
 	gmshop_edge: "gmshop-edge-upstream-v1",
+	dhru: "dhru-reseller-v1",
 } as const satisfies Record<SupplierProvider, string>;
 
 const minorAmountSchema = z
@@ -118,7 +120,19 @@ export const gmshopEdgeCredentialsSchema = z.object({
 	apiSecret: z.string().min(32).max(1024),
 });
 
+export const dhruCredentialsSchema = z
+	.object({
+		apiToken: z
+			.string()
+			.trim()
+			.min(1)
+			.max(8192)
+			.regex(/^[^\s]+$/),
+	})
+	.strict();
+
 export const supplierCredentialsSchema = z.discriminatedUnion("provider", [
+	z.object({ provider: z.literal("dhru"), credentials: dhruCredentialsSchema }),
 	z.object({ provider: z.literal("acg"), credentials: acgCredentialsSchema }),
 	z.object({
 		provider: z.literal("dujiao_next"),
@@ -130,12 +144,42 @@ export const supplierCredentialsSchema = z.discriminatedUnion("provider", [
 	}),
 ]);
 
-export const supplierPurchaseResultSchema = z.discriminatedUnion("status", [
-	z.object({
+export const supplierServiceResultSchema = z
+	.object({
+		type: z.literal("service"),
+		resultText: z
+			.string()
+			.min(1)
+			.max(64_000)
+			.refine((value) => value.trim().length > 0),
+		resultData: z.record(z.string(), z.json()).optional(),
+	})
+	.strict()
+	.refine(
+		(value) =>
+			new TextEncoder().encode(JSON.stringify(value)).byteLength <= 256 * 1024,
+	);
+
+export const supplierFulfillmentSchema = z.discriminatedUnion("type", [
+	z
+		.object({
+			type: z.literal("stock"),
+			cards: z.array(z.string().min(1).max(64_000)).min(1).max(10_000),
+		})
+		.strict(),
+	supplierServiceResultSchema,
+]);
+
+export const supplierSuppliedResultSchema = z
+	.object({
 		status: z.literal("supplied"),
 		upstreamOrderId: z.string().min(1).max(512),
-		cards: z.array(z.string().min(1).max(64_000)).min(1).max(10_000),
-	}),
+		fulfillment: supplierFulfillmentSchema,
+	})
+	.strict();
+
+export const supplierPurchaseResultSchema = z.discriminatedUnion("status", [
+	supplierSuppliedResultSchema,
 	z.object({
 		status: z.literal("processing"),
 		upstreamOrderId: z.string().min(1).max(512),
@@ -153,4 +197,73 @@ export const supplierPurchaseResultSchema = z.discriminatedUnion("status", [
 
 export type SupplierPurchaseResult = z.infer<
 	typeof supplierPurchaseResultSchema
+>;
+
+// An explicit service payload keeps stock callers from placing paid Dhru orders.
+// Dynamic keys retain the provider's exact casing. Routing fields belong to the
+// worker, never to customer input.
+const serviceInputKeySchema = z
+	.string()
+	.min(1)
+	.max(120)
+	.refine(
+		(key) =>
+			![
+				"reference_id",
+				"feedback_url",
+				"Quantity",
+				"__proto__",
+				"prototype",
+				"constructor",
+			].includes(key),
+	);
+const serviceInputValueSchema = z.union([
+	z.string().max(16_000),
+	z.number().finite(),
+	z.boolean(),
+	z.array(z.string().max(1_000)).max(100),
+]);
+
+const serviceOrderShapeSchema = z
+	.object({
+		productId: z.union([
+			z.number().int().positive(),
+			z.string().min(1).max(512),
+		]),
+		inputData: z.record(serviceInputKeySchema, serviceInputValueSchema),
+	})
+	.strict()
+	.refine(
+		(value) =>
+			Object.keys(value.inputData).length <= 100 &&
+			new TextEncoder().encode(JSON.stringify(value)).byteLength <= 64 * 1024,
+	);
+
+export const supplierServiceOrderInputSchema = z.preprocess(
+	(value, context) => {
+		// Zod omits __proto__ while constructing record output. Check the raw
+		// snapshot first so a routing/prototype key cannot disappear into {}.
+		if (value && typeof value === "object" && "inputData" in value) {
+			const data = value.inputData;
+			if (
+				data &&
+				typeof data === "object" &&
+				Object.keys(data).some(
+					(key) => !serviceInputKeySchema.safeParse(key).success,
+				)
+			) {
+				context.addIssue({
+					code: "custom",
+					message: "Invalid service input key",
+				});
+				return z.NEVER;
+			}
+		}
+		return value;
+	},
+	serviceOrderShapeSchema,
+);
+
+export type SupplierServiceOrderInput = z.infer<
+	typeof supplierServiceOrderInputSchema
 >;

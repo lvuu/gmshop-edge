@@ -1,4 +1,7 @@
-import type { SupplierPurchaseResult } from "../schema";
+import type {
+	SupplierPurchaseResult,
+	SupplierServiceOrderInput,
+} from "../schema";
 
 export type SupplierBalance = {
 	amountMinor: string;
@@ -32,6 +35,14 @@ export interface SupplierAdapter {
 		updatedAfter?: string;
 		includeInactive?: boolean;
 	}): Promise<{ products: SupplierProduct[]; total: number }>;
+	getServiceDefinition?(productId: string): Promise<{
+		name: string;
+		costMinor: string;
+		definitions: ReturnType<typeof import("./dhru-fields").importDhruFields>;
+	}>;
+	getServiceQuote?(
+		productId: string,
+	): Promise<{ name: string; costMinor: string }>;
 	getSku(productId: string, skuId: string): Promise<SupplierSku>;
 	submitOrder(input: {
 		skuId: string;
@@ -39,6 +50,7 @@ export interface SupplierAdapter {
 		requestNo: string;
 		callbackUrl: string;
 		traceId: string;
+		service?: SupplierServiceOrderInput;
 	}): Promise<SupplierPurchaseResult>;
 	reconcileOrder(input: {
 		upstreamOrderId: string | null;
@@ -47,5 +59,6 @@ export interface SupplierAdapter {
 		requestNo: string;
 		callbackUrl: string;
 		traceId: string;
+		service?: SupplierServiceOrderInput;
 	}): Promise<SupplierPurchaseResult>;
 }

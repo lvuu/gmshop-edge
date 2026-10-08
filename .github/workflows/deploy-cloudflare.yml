@@ -16,7 +16,7 @@ jobs:
     name: Deploy original GMShop Edge
     if: github.repository == 'lvuu/gmshop-edge' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Check out main
         uses: actions/checkout@v7
@@ -49,6 +49,15 @@ jobs:
 
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
+
+      - name: Validate application before remote changes
+        run: |
+          bun run generate-paraglide
+          bun run typecheck
+          bun run check
+          bun run test
+          bun run build
+          bun run build:bun
 
       - name: Prepare resources, apply migrations and build
         env:

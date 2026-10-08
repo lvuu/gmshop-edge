@@ -47,6 +47,9 @@ insertion. Remove the patch only after an upstream upgrade passes this test.
 Cloudflare deployment runs after the `main` Release quality and release job succeeds, checking
 out that exact tested commit. Manual deployment remains available. The existing
 repository Cloudflare secrets, resource preparation and migrations are reused.
+Both automatic and manual deployment run the full quality gate before remote
+resource preparation or migrations. For the Dhru upgrade and single-service
+acceptance steps, see [DHRU-SERVICE-INTEGRATION.md](DHRU-SERVICE-INTEGRATION.md).
 
 ## Core capabilities
 
@@ -268,7 +271,7 @@ docker compose pull
 docker compose up -d
 ```
 
-For source deployments, use Bun 1.3 with `bun run build:bun` and
+For source deployments, use the Bun version pinned in `.bun-version` with `bun run build:bun` and
 `bun run start:bun`. The maintained `bun run data -- …` CLI provides
 `backup`, `restore`, and `import-cloudflare`; restore and import accept only a
 new or empty target and validate integrity before installing data.
@@ -387,6 +390,15 @@ Replace the credentials and explicitly enable accounts in the admin console for
 integration testing. The script accepts `--local` only, preserves existing
 rows, and cannot write to a remote D1 database.
 
+Dhru acceptance data adds a draft USD 1.00 service and a disabled demo account.
+Customer orders `GMDHRU000001` through `GMDHRU000005` cover waiting for supply,
+processing with a known upstream ID, delivered private results, rejection, and
+manual review after a missing receipt ID. Search `GMDHRU` in supplier orders;
+use the installed root's order page to inspect customer progress and the successful
+result. The service is not purchasable. Seeding creates no supplier outbox work or
+automatic polling schedule, and repeated runs preserve these orders and encrypted
+results. This is local UI acceptance data, not evidence of a real paid Dhru test.
+
 Use `bun run db:generate` only when intentionally changing the Drizzle schema,
 then review the generated migration. Normal development applies migrations; it
 does not regenerate the clean-install baseline. Run `bun run generate-paraglide`
@@ -403,6 +415,21 @@ bun run check
 bun run build
 bun run build:bun
 ```
+
+`bun run test` runs unit/security, D1 integration, and Bun runtime tests in
+three sequential stages. Run `bun run test:unit`, `bun run test:integration`,
+or `bun run test:bun-runtime` for one stage; `bun run test:vitest` retains the
+combined Vitest entry point. Verbose output reports individual test progress.
+Keep D1 suites serial: launching multiple runners against Miniflare concurrently
+can cause runtime initialization failures. Each integration test keeps its own
+database; the helper applies each migration as one ordered D1 batch transaction,
+with SQL text cached per test worker. Do not impose a 60/90-second wall-clock
+limit on the whole suite. CI allows 10 minutes for unit/security, 30 minutes for
+integration, 10 minutes for Bun runtime, and 45 minutes for the complete job;
+individual test/hook timeouts still detect hung cases. Worker deployment preflight
+waits for all started resource probes to settle before returning a failure,
+so no sibling command can outlive the reported build result. Failed preflight
+never proceeds to database migrations or Vite.
 
 Deterministic automated tests cover application behavior. Real payment, email,
 Telegram, and automation-provider smoke suites remain manual and

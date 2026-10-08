@@ -157,7 +157,7 @@ export async function handleDujiaoSupplierCallback(
 			await completeSupplierOrderFromCallback(db, order.id, {
 				status: "supplied",
 				upstreamOrderId: String(payload.order_id),
-				cards,
+				fulfillment: { type: "stock", cards },
 			});
 		}
 		await db

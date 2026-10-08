@@ -89,7 +89,8 @@ export async function queryDeliveryRecords(
 			deliveryType: String(row.delivery_type) as
 				| "stock"
 				| "download"
-				| "automation",
+				| "automation"
+				| "service",
 			status: String(row.status) as (typeof deliveryStatuses)[number],
 			quantity: Number(row.quantity),
 			attemptCount: Number(row.attempt_count),

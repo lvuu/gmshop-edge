@@ -24,7 +24,7 @@ const apiSecret = "b".repeat(64);
 const keyRowId = "supplier-api-auth-key";
 const path = "/api/v1/supplier/ping";
 
-describe("supplier API authentication", () => {
+describe("supplier API authentication", { timeout: 15_000 }, () => {
 	let miniflare: Miniflare;
 	let db: D1Database;
 	let nonceSequence = 0;

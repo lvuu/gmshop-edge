@@ -19,7 +19,14 @@ import { PageHeader } from "#/layouts/components/page-header";
 import { formatDateTime, formatMinorAmount, formatNumber } from "#/lib/format";
 import { useCurrentProTableUrlState } from "#/lib/pro-table-url-state";
 import { m } from "#/paraglide/messages";
-import { supplierErrorLabel } from "../error-label";
+import {
+	supplierErrorLabel,
+	supplierOrderActionErrorMessage,
+} from "../error-label";
+import {
+	supplierOrderActionAllowed,
+	supplierOrderNeedsManualReview,
+} from "../order-actions";
 import { supplierProviderLabel } from "../provider-label";
 import {
 	actSupplierOrderFn,
@@ -35,13 +42,26 @@ export function SupplierOrdersPage() {
 	});
 	const client = useQueryClient();
 	const [refreshKey, setRefreshKey] = useState(0);
+	const refresh = useCallback(async () => {
+		await client.invalidateQueries({
+			queryKey: ["admin", "suppliers", "orders"],
+		});
+		setRefreshKey((value) => value + 1);
+	}, [client]);
 	const action = useMutation({
 		mutationFn: actSupplierOrderFn,
-		onSuccess: () => {
-			toast.success(m.supplier_action_queued());
-			setRefreshKey((value) => value + 1);
+		onSuccess: async (result) => {
+			toast.success(
+				result.dispatch === "published"
+					? m.supplier_action_queued()
+					: m.supplier_action_pending_dispatch(),
+			);
+			await refresh();
 		},
-		onError: () => toast.error(m.common_operation_failed()),
+		onError: async (error) => {
+			toast.error(supplierOrderActionErrorMessage(error));
+			await refresh();
+		},
 	});
 	const request = useCallback(
 		(state: ProTableState) => {
@@ -104,11 +124,15 @@ export function SupplierOrdersPage() {
 							{String(row.original.upstream_sku_name)}
 						</div>
 						<div className="truncate font-mono text-muted-foreground text-xs">
-							{String(
-								row.original.upstream_order_id ??
-									row.original.provider_request_no ??
-									"—",
-							)}
+							{row.original.upstream_order_id ?? "—"}
+						</div>
+						<div className="break-all text-muted-foreground text-xs">
+							{m.supplier_purchase_reference()}:{" "}
+							<span className="font-mono">
+								{row.original.provider === "dhru"
+									? row.original.id
+									: (row.original.provider_request_no ?? "—")}
+							</span>
 						</div>
 						<div
 							className="truncate text-muted-foreground text-xs"
@@ -152,6 +176,18 @@ export function SupplierOrdersPage() {
 				cell: ({ row }) => (
 					<div className="flex min-w-40 flex-col items-start gap-1.5">
 						<SupplierOrderStateBadge state={String(row.original.state)} />
+						{supplierOrderNeedsManualReview(
+							orderActionContext(row.original),
+						) ? (
+							<>
+								<Badge variant="outline">
+									{m.supplier_order_manual_review()}
+								</Badge>
+								<p className="max-w-64 text-wrap text-muted-foreground text-xs">
+									{m.supplier_order_manual_review_description()}
+								</p>
+							</>
+						) : null}
 						<div className="text-muted-foreground text-xs">
 							{m.supplier_attempt_count()}{" "}
 							{formatNumber(Number(row.original.attempt_count))}
@@ -200,9 +236,10 @@ export function SupplierOrdersPage() {
 								<DropdownMenuItem
 									disabled={
 										action.isPending ||
-										!row.original.account_id ||
-										row.original.state === "supplied" ||
-										row.original.state === "refunded"
+										!supplierOrderActionAllowed(
+											"reconcile",
+											orderActionContext(row.original),
+										)
 									}
 									onClick={() =>
 										action.mutate({
@@ -219,9 +256,10 @@ export function SupplierOrdersPage() {
 								<DropdownMenuItem
 									disabled={
 										action.isPending ||
-										row.original.state === "uncertain" ||
-										row.original.state === "supplied" ||
-										row.original.state === "refunded"
+										!supplierOrderActionAllowed(
+											"reselect",
+											orderActionContext(row.original),
+										)
 									}
 									onClick={() =>
 										action.mutate({
@@ -265,6 +303,17 @@ export function SupplierOrdersPage() {
 			/>
 		</div>
 	);
+}
+
+function orderActionContext(order: Order) {
+	return {
+		state: order.state,
+		orderStatus: order.order_status,
+		accountId: order.account_id,
+		accountLockedAt: order.account_locked_at,
+		provider: order.provider,
+		upstreamOrderId: order.upstream_order_id,
+	};
 }
 
 function OrderMetric({

@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig({
 	test: {
@@ -7,6 +7,14 @@ export default defineConfig({
 		// isolates contend for the local runtime and produce nondeterministic
 		// hook/test timeouts. Test files remain independently runnable.
 		fileParallelism: false,
+		maxWorkers: 1,
+		reporters: ["verbose"],
+		exclude: [
+			...configDefaults.exclude,
+			"tests/unit/server/node-data-operations.test.ts",
+			"tests/unit/server/node-runtime-adapters.test.ts",
+			"tests/unit/server/node-server-runtime.test.ts",
+		],
 		coverage: { reporter: ["text", "json"] },
 	},
 });

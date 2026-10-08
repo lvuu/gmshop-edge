@@ -342,19 +342,21 @@ export function ProductsPage({
 								</ProButton>
 							</DropdownMenuTrigger>
 							<DropdownMenuContent align="end">
-								{(["stock", "download", "automation"] as const).map((type) => (
-									<DropdownMenuItem
-										key={type}
-										onSelect={() =>
-											navigate({
-												to: "/admin/products/new",
-												search: { type },
-											})
-										}
-									>
-										{deliveryLabel(type)}
-									</DropdownMenuItem>
-								))}
+								{(["stock", "download", "automation", "service"] as const).map(
+									(type) => (
+										<DropdownMenuItem
+											key={type}
+											onSelect={() =>
+												navigate({
+													to: "/admin/products/new",
+													search: { type },
+												})
+											}
+										>
+											{deliveryLabel(type)}
+										</DropdownMenuItem>
+									),
+								)}
 							</DropdownMenuContent>
 						</DropdownMenu>
 					) : null
@@ -403,6 +405,7 @@ export function ProductsPage({
 }
 
 function deliveryLabel(type: Product["productType"]) {
+	if (type === "service") return m.catalog_product_type_service();
 	if (type === "stock") return m.catalog_product_type_stock();
 	if (type === "download") return m.catalog_product_type_download();
 	return m.catalog_product_type_automation();

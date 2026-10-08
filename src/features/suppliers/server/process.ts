@@ -2,16 +2,21 @@ import {
 	fingerprintInventorySecret,
 	maskInventorySecret,
 } from "#/features/catalog/server/inventory-secrets";
+import { encryptDeliveryContent } from "#/features/fulfillment/secrets";
 import {
 	OperationTaskAlreadyRunningError,
 	runTrackedTask,
 } from "#/features/operations/server/task-runs";
 import { DomainError } from "#/lib/domain-error";
-import { encryptSecret } from "#/lib/secrets";
+import { decryptSecret, encryptSecret } from "#/lib/secrets";
 import { loadRuntimeConfig } from "#/server/runtime-config";
 import { multiplyMinor } from "../money";
 import { providerRequestNumber } from "../providers/signatures";
-import type { SupplierPurchaseResult } from "../schema";
+import {
+	type SupplierPurchaseResult,
+	supplierServiceOrderInputSchema,
+	supplierSuppliedResultSchema,
+} from "../schema";
 import {
 	adapterForSupplierAccount,
 	type SupplierAccountRuntimeRow,
@@ -23,6 +28,7 @@ type SupplierOrderContext = {
 	order_item_id: string;
 	delivery_record_id: string;
 	quantity: number;
+	currency: string;
 	state:
 		| "pending"
 		| "selecting"
@@ -33,18 +39,21 @@ type SupplierOrderContext = {
 		| "refunded";
 	selected_account_id: string | null;
 	selected_credentials_revision: number | null;
+	account_locked_at: number | null;
 	provider_request_no: string | null;
 	upstream_order_id: string | null;
 	binding_snapshot_json: string;
+	updated_at: number;
 };
 
 type BindingSnapshot = {
-	provider: "acg" | "dujiao_next" | "gmshop_edge";
+	provider: "acg" | "dujiao_next" | "gmshop_edge" | "dhru";
 	normalizedApiOrigin: string;
 	protocolVersion: string;
 	upstreamProductId: string;
 	upstreamSkuId: string;
 	maxCostMinor: string;
+	currencyDecimals?: number;
 };
 
 type CandidateAccount = SupplierAccountRuntimeRow & {
@@ -82,6 +91,7 @@ export async function completeSupplierOrderFromCallback(
 	supplierOrderId: string,
 	result: Extract<SupplierPurchaseResult, { status: "supplied" }>,
 ) {
+	result = supplierSuppliedResultSchema.parse(result);
 	const order = await loadOrder(db, supplierOrderId);
 	if (!order)
 		throw new DomainError(
@@ -127,6 +137,18 @@ async function processSupplierOrderUnlocked(
 			409,
 			"Supplier order cannot be processed",
 		);
+	const fulfillable = await db
+		.prepare(`SELECT 1 AS ready FROM shop_order_items oi
+	 JOIN shop_orders o ON o.id = oi.order_id WHERE oi.id = ? AND o.status IN ('paid', 'fulfilling')`)
+		.bind(order.order_item_id)
+		.first();
+	if (!fulfillable)
+		throw new DomainError(
+			"supplier_order_terminal",
+			409,
+			"Order cannot be supplied",
+			{ retryable: false },
+		);
 	const runtime = await loadRuntimeConfig(db);
 	if (!runtime.commerceSecret)
 		throw new DomainError(
@@ -135,6 +157,27 @@ async function processSupplierOrderUnlocked(
 			"Supplier configuration unavailable",
 		);
 	const snapshot = parseBindingSnapshot(order.binding_snapshot_json);
+	if (
+		snapshot.provider === "dhru" &&
+		order.selected_account_id &&
+		!order.upstream_order_id
+	)
+		return applyPurchaseResult(
+			db,
+			order,
+			{
+				status: "uncertain",
+				upstreamOrderId: null,
+				errorCode: "supplier_order_id_missing",
+			},
+			runtime.commerceSecret,
+		);
+	const service = await loadServiceInput(
+		db,
+		order.order_item_id,
+		snapshot,
+		runtime.commerceSecret,
+	);
 	if (order.selected_account_id) {
 		const account = await loadSelectedAccount(db, order.selected_account_id);
 		if (!account || !order.selected_credentials_revision)
@@ -159,8 +202,14 @@ async function processSupplierOrderUnlocked(
 			skuId: snapshot.upstreamSkuId,
 			quantity: order.quantity,
 			requestNo: order.provider_request_no ?? "",
-			callbackUrl: callbackUrl(options.callbackOrigin, account.id),
+			callbackUrl: service
+				? serviceCallbackUrl(
+						options.callbackOrigin ?? runtime.betterAuthUrl,
+						account.id,
+					)
+				: callbackUrl(options.callbackOrigin, account.id),
 			traceId: order.id,
+			service,
 		});
 		return applyPurchaseResult(db, order, result, runtime.commerceSecret);
 	}
@@ -173,8 +222,16 @@ async function processSupplierOrderUnlocked(
 		)
 		.bind(now, order.id)
 		.run();
-	const candidates = await candidateAccounts(db, snapshot, now);
+	const candidates = await candidateAccounts(
+		db,
+		snapshot,
+		now,
+		service ? order.currency : null,
+	);
 	for (const candidate of candidates) {
+		let submissionStarted = false;
+		let receivedOrderId: string | null = null;
+		let claimedOrder: SupplierOrderContext | null = null;
 		try {
 			return await runTrackedTask(
 				db,
@@ -196,7 +253,12 @@ async function processSupplierOrderUnlocked(
 					});
 					const [connection, sku] = await Promise.all([
 						adapter.testConnection(),
-						adapter.getSku(snapshot.upstreamProductId, snapshot.upstreamSkuId),
+						service
+							? serviceQuote(adapter, snapshot.upstreamProductId)
+							: adapter.getSku(
+									snapshot.upstreamProductId,
+									snapshot.upstreamSkuId,
+								),
 					]);
 					const totalCostMinor = multiplyMinor(sku.costMinor, order.quantity);
 					await assertCandidateBudget(
@@ -204,7 +266,7 @@ async function processSupplierOrderUnlocked(
 						candidate,
 						connection.balance.amountMinor,
 						totalCostMinor,
-						sku.stockQuantity,
+						service ? order.quantity : sku.stockQuantity,
 						order.quantity,
 						sku.active,
 						sku.costMinor,
@@ -224,7 +286,8 @@ async function processSupplierOrderUnlocked(
 							 selection_count = selection_count + 1, submitted_at = ?,
 							 next_retry_at = NULL, last_error_code = NULL, updated_at = ?
 							 WHERE id = ? AND selected_account_id IS NULL
-							 AND state IN ('pending', 'selecting')`,
+							 AND state IN ('pending', 'selecting')
+ AND EXISTS (SELECT 1 FROM shop_order_items oi JOIN shop_orders o ON o.id = oi.order_id WHERE oi.id = supplier_orders.order_item_id AND o.status IN ('paid', 'fulfilling'))`,
 						)
 						.bind(
 							candidate.id,
@@ -244,6 +307,16 @@ async function processSupplierOrderUnlocked(
 							"Supplier order was claimed concurrently",
 							{ retryable: true },
 						);
+					// Receipt and fallback writes belong to this claim, even if a later
+					// read observes a different account, credential revision or reference.
+					claimedOrder = {
+						...order,
+						selected_account_id: candidate.id,
+						selected_credentials_revision: candidate.credentials_revision,
+						provider_request_no: requestNo,
+						state: "submitting",
+						updated_at: now,
+					};
 					await db
 						.prepare(
 							`UPDATE supplier_accounts SET balance_minor = ?,
@@ -253,35 +326,55 @@ async function processSupplierOrderUnlocked(
 						)
 						.bind(connection.balance.amountMinor, now, now, now, candidate.id)
 						.run();
+					// After this boundary, only a persisted definitive rejection may release
+					// the account. A local persistence failure says nothing about the purchase.
+					submissionStarted = true;
 					const result = await adapter.submitOrder({
 						skuId: snapshot.upstreamSkuId,
 						quantity: order.quantity,
 						requestNo,
-						callbackUrl: callbackUrl(options.callbackOrigin, candidate.id),
+						callbackUrl: service
+							? serviceCallbackUrl(
+									options.callbackOrigin ?? runtime.betterAuthUrl,
+									candidate.id,
+								)
+							: callbackUrl(options.callbackOrigin, candidate.id),
 						traceId: order.id,
+						service,
 					});
+					receivedOrderId =
+						"upstreamOrderId" in result ? result.upstreamOrderId : null;
 					return applyPurchaseResult(
 						db,
-						{
-							...order,
-							selected_account_id: candidate.id,
-							selected_credentials_revision: candidate.credentials_revision,
-							provider_request_no: requestNo,
-							state: "submitting",
-						},
+						claimedOrder,
 						result,
 						runtime.commerceSecret,
 					);
 				},
 			);
 		} catch (error) {
-			if (error instanceof OperationTaskAlreadyRunningError) continue;
+			if (
+				!submissionStarted &&
+				error instanceof OperationTaskAlreadyRunningError
+			)
+				continue;
 			const current = await loadOrder(db, order.id);
 			if (current?.selected_account_id === candidate.id) {
+				if (!["submitting", "uncertain"].includes(current.state)) throw error;
 				if (current.state === "uncertain") throw error;
-				if (isUncertainError(error)) {
-					await markUncertain(db, current, "supplier_request_uncertain");
-					throw error;
+				if (submissionStarted || isUncertainError(error)) {
+					if (!claimedOrder) throw error;
+					await markUncertain(
+						db,
+						claimedOrder,
+						"supplier_request_uncertain",
+						receivedOrderId,
+					);
+					throw new DomainError(
+						"supplier_request_uncertain",
+						503,
+						"Supplier request outcome requires reconciliation",
+					);
 				}
 				await releaseDefinitiveFailure(
 					db,
@@ -319,39 +412,62 @@ async function applyPurchaseResult(
 	if (result.status === "supplied")
 		return fulfillSupplierOrder(db, order, result, commerceSecret);
 	if (result.status === "processing" || result.status === "uncertain") {
-		await db
-			.prepare(
-				`UPDATE supplier_orders SET state = 'uncertain',
-				 upstream_order_id = COALESCE(?, upstream_order_id),
-				 account_locked_at = COALESCE(account_locked_at, ?),
-				 next_retry_at = ?, last_error_code = ?, updated_at = ?
-				 WHERE id = ? AND selected_account_id IS NOT NULL
-				 AND state IN ('submitting', 'uncertain')`,
-			)
-			.bind(
-				result.upstreamOrderId,
-				Date.now(),
-				Date.now() + 15_000,
-				result.status === "processing"
-					? "supplier_order_processing"
-					: result.errorCode,
-				Date.now(),
-				order.id,
-			)
-			.run();
+		await markUncertain(
+			db,
+			order,
+			result.status === "processing"
+				? "supplier_order_processing"
+				: result.errorCode,
+			result.upstreamOrderId,
+		);
 		throw new DomainError(
 			"supplier_order_pending",
 			503,
 			"Supplier order is still pending",
 		);
 	}
-	await releaseDefinitiveFailure(
-		db,
-		order,
-		order.selected_account_id ?? "",
-		result.errorCode,
-		Date.now(),
-	);
+	if (order.account_locked_at !== null || order.upstream_order_id !== null) {
+		// A final rejection of an accepted purchase is terminal. Its identity and
+		// credential revision remain locked; another account must never buy again.
+		const rejected = await db
+			.prepare(`UPDATE supplier_orders AS so
+			 SET state = 'failed', next_retry_at = NULL, last_error_code = ?, updated_at = ?
+			 WHERE so.id = ? AND so.state = ? AND so.updated_at = ?
+			 AND so.state IN ('submitting', 'uncertain')
+			 AND so.selected_account_id IS ? AND so.selected_credentials_revision IS ?
+			 AND so.account_locked_at IS ? AND so.provider_request_no IS ?
+			 AND so.upstream_order_id IS ?
+			 AND EXISTS (SELECT 1 FROM shop_orders o WHERE o.id = so.order_id
+			  AND o.status IN ('paid', 'fulfilling'))`)
+			.bind(
+				result.errorCode,
+				Math.max(Date.now(), order.updated_at + 1),
+				order.id,
+				order.state,
+				order.updated_at,
+				order.selected_account_id,
+				order.selected_credentials_revision,
+				order.account_locked_at,
+				order.provider_request_no,
+				order.upstream_order_id,
+			)
+			.run();
+		if (rejected.meta.changes !== 1)
+			throw new DomainError(
+				"supplier_order_changed",
+				409,
+				"Supplier order changed during reconciliation",
+				{ retryable: true },
+			);
+	} else {
+		await releaseDefinitiveFailure(
+			db,
+			order,
+			order.selected_account_id ?? "",
+			result.errorCode,
+			Date.now(),
+		);
+	}
 	throw new DomainError(
 		result.errorCode,
 		409,
@@ -365,9 +481,23 @@ async function fulfillSupplierOrder(
 	result: Extract<SupplierPurchaseResult, { status: "supplied" }>,
 	commerceSecret: string,
 ) {
-	const cards = [...new Set(result.cards.map((value) => value.trim()))].filter(
-		Boolean,
-	);
+	result = supplierSuppliedResultSchema.parse(result);
+	const delivery = await db
+		.prepare("SELECT delivery_type FROM delivery_records WHERE id = ?")
+		.bind(order.delivery_record_id)
+		.first<{ delivery_type: string }>();
+	if (delivery?.delivery_type !== result.fulfillment.type)
+		throw new DomainError(
+			"supplier_delivery_type_mismatch",
+			409,
+			"Supplier result does not match the delivery type",
+			{ retryable: false },
+		);
+	if (result.fulfillment.type === "service")
+		return fulfillServiceSupplierOrder(db, order, result, commerceSecret);
+	const cards = [
+		...new Set(result.fulfillment.cards.map((value) => value.trim())),
+	].filter(Boolean);
 	if (cards.length !== order.quantity)
 		throw new DomainError(
 			"supplier_delivery_quantity_mismatch",
@@ -450,6 +580,92 @@ async function fulfillSupplierOrder(
 	return { id: order.id, state: "supplied", duplicate };
 }
 
+async function fulfillServiceSupplierOrder(
+	db: D1Database,
+	order: SupplierOrderContext,
+	result: Extract<SupplierPurchaseResult, { status: "supplied" }>,
+	commerceSecret: string,
+) {
+	if (
+		order.upstream_order_id !== null &&
+		order.upstream_order_id !== result.upstreamOrderId
+	)
+		throw new DomainError(
+			"supplier_service_delivery_conflict",
+			409,
+			"Service result does not match the accepted purchase",
+			{ retryable: false },
+		);
+	const encrypted = await encryptDeliveryContent(
+		JSON.stringify(result.fulfillment),
+		commerceSecret,
+	);
+	const now = Math.max(Date.now(), order.updated_at + 1);
+	const outboxId = crypto.randomUUID();
+	// The unique event is also this transaction's claim. Every subsequent write
+	// requires its exact ID, so a losing or duplicate response cannot save content.
+	const results = await db.batch([
+		db
+			.prepare(`INSERT INTO outbox_events
+   (id, event_type, aggregate_type, aggregate_id, idempotency_key, payload, status, attempt_count, created_at, updated_at)
+   SELECT ?, 'delivery.requested', 'delivery', dr.id, ?, ?, 'pending', 0, ?, ?
+   FROM supplier_orders so JOIN delivery_records dr ON dr.id = so.delivery_record_id
+   JOIN shop_order_items oi ON oi.id = dr.order_item_id JOIN shop_orders o ON o.id = oi.order_id
+   WHERE so.id = ? AND so.state = ? AND so.updated_at = ?
+   AND so.state IN ('submitting', 'uncertain')
+   AND so.selected_account_id IS ? AND so.selected_credentials_revision IS ?
+   AND so.account_locked_at IS ? AND so.provider_request_no IS ? AND so.upstream_order_id IS ?
+   AND dr.id = ? AND dr.order_item_id = so.order_item_id AND o.id = so.order_id
+   AND dr.delivery_type = 'service' AND dr.status = 'awaiting_supply'
+   AND o.status IN ('paid', 'fulfilling')
+   ON CONFLICT(idempotency_key) DO NOTHING`)
+			.bind(
+				outboxId,
+				`supplier-delivery-requested:${order.delivery_record_id}`,
+				JSON.stringify({
+					deliveryId: order.delivery_record_id,
+					orderItemId: order.order_item_id,
+				}),
+				now,
+				now,
+				order.id,
+				order.state,
+				order.updated_at,
+				order.selected_account_id,
+				order.selected_credentials_revision,
+				order.account_locked_at,
+				order.provider_request_no,
+				order.upstream_order_id,
+				order.delivery_record_id,
+			),
+		db
+			.prepare(`UPDATE supplier_orders SET state = 'supplied', upstream_order_id = ?,
+   supplied_at = ?, next_retry_at = NULL, last_error_code = NULL, updated_at = ?
+   WHERE id = ? AND EXISTS (SELECT 1 FROM outbox_events WHERE id = ?)`)
+			.bind(result.upstreamOrderId, now, now, order.id, outboxId),
+		db
+			.prepare(`UPDATE delivery_records SET status = 'pending', content_encrypted = ?,
+   content_key_version = 1, next_attempt_at = ?, error_code = NULL, updated_at = ?
+   WHERE id = ? AND EXISTS (SELECT 1 FROM outbox_events WHERE id = ?)`)
+			.bind(encrypted, now, now, order.delivery_record_id, outboxId),
+	]);
+	if (Number(results[0]?.meta.changes ?? 0) !== 1) {
+		const current = await loadOrder(db, order.id);
+		if (
+			current?.state !== "supplied" ||
+			current.upstream_order_id !== result.upstreamOrderId
+		)
+			throw new DomainError(
+				"supplier_service_delivery_conflict",
+				409,
+				"Service order is not fulfillable",
+				{ retryable: false },
+			);
+		return { id: order.id, state: "supplied", duplicate: true };
+	}
+	return { id: order.id, state: "supplied", duplicate: false };
+}
+
 async function deterministicSupplierStockId(orderId: string, index: number) {
 	const digest = new Uint8Array(
 		await crypto.subtle.digest(
@@ -469,12 +685,15 @@ async function candidateAccounts(
 	db: D1Database,
 	snapshot: BindingSnapshot,
 	now: number,
+	currency: string | null,
 ) {
 	const rows = await db
 		.prepare(
 			`SELECT * FROM supplier_accounts WHERE provider = ?
 			 AND normalized_api_origin = ? AND protocol_version = ?
 			 AND enabled = 1 AND health_status <> 'unavailable'
+			 AND (? IS NULL OR currency = ?)
+			 AND (? IS NULL OR currency_decimals = ?)
 			 AND (cooldown_until IS NULL OR cooldown_until <= ?)
 			 ORDER BY consecutive_failures, COALESCE(last_selected_at, 0),
 			 LENGTH(balance_minor) DESC, balance_minor DESC, id LIMIT 20`,
@@ -483,6 +702,10 @@ async function candidateAccounts(
 			snapshot.provider,
 			snapshot.normalizedApiOrigin,
 			snapshot.protocolVersion,
+			currency,
+			currency,
+			currency ? (snapshot.currencyDecimals ?? null) : null,
+			currency ? (snapshot.currencyDecimals ?? null) : null,
 			now,
 		)
 		.all<CandidateAccount>();
@@ -561,17 +784,61 @@ async function markUncertain(
 	db: D1Database,
 	order: SupplierOrderContext,
 	code: string,
+	upstreamOrderId: string | null = null,
 ) {
-	const now = Date.now();
-	await db
+	if (
+		order.upstream_order_id !== null &&
+		upstreamOrderId !== null &&
+		order.upstream_order_id !== upstreamOrderId
+	)
+		throw new DomainError(
+			"supplier_order_changed",
+			409,
+			"Supplier result does not match the accepted purchase",
+			{ retryable: true },
+		);
+	const now = Math.max(Date.now(), order.updated_at + 1);
+	const isDhru =
+		parseBindingSnapshot(order.binding_snapshot_json).provider === "dhru";
+	const changed = await db
 		.prepare(
-			`UPDATE supplier_orders SET state = 'uncertain',
+			`UPDATE supplier_orders AS so SET state = 'uncertain',
+			 upstream_order_id = COALESCE(upstream_order_id, ?),
 			 account_locked_at = COALESCE(account_locked_at, ?),
-			 next_retry_at = ?, last_error_code = ?, updated_at = ?
-			 WHERE id = ? AND selected_account_id IS NOT NULL`,
+			 next_retry_at = CASE WHEN ? AND COALESCE(upstream_order_id, ?) IS NULL
+			  THEN NULL ELSE ? END, last_error_code = ?, updated_at = ?
+			 WHERE so.id = ? AND so.state = ? AND so.updated_at = ?
+			 AND so.state IN ('submitting', 'uncertain') AND so.selected_account_id IS NOT NULL
+			 AND so.selected_account_id IS ? AND so.selected_credentials_revision IS ?
+			 AND so.account_locked_at IS ? AND so.provider_request_no IS ? AND so.upstream_order_id IS ?
+			 AND EXISTS (SELECT 1 FROM shop_orders o WHERE o.id = so.order_id
+			  AND o.status IN ('paid', 'fulfilling'))`,
 		)
-		.bind(now, now + 15_000, code, now, order.id)
+		.bind(
+			upstreamOrderId,
+			now,
+			isDhru ? 1 : 0,
+			upstreamOrderId,
+			now + 15_000,
+			code,
+			now,
+			order.id,
+			order.state,
+			order.updated_at,
+			order.selected_account_id,
+			order.selected_credentials_revision,
+			order.account_locked_at,
+			order.provider_request_no,
+			order.upstream_order_id,
+		)
 		.run();
+	if (changed.meta.changes !== 1)
+		throw new DomainError(
+			"supplier_order_changed",
+			409,
+			"Supplier order changed during reconciliation",
+			{ retryable: true },
+		);
 }
 
 function loadOrder(db: D1Database, id: string) {
@@ -591,8 +858,8 @@ function loadSelectedAccount(db: D1Database, id: string) {
 function parseBindingSnapshot(value: string): BindingSnapshot {
 	const parsed = JSON.parse(value) as Partial<BindingSnapshot>;
 	if (
-		!(["acg", "dujiao_next", "gmshop_edge"] as const).includes(
-			parsed.provider as "acg" | "dujiao_next" | "gmshop_edge",
+		!(["acg", "dujiao_next", "gmshop_edge", "dhru"] as const).includes(
+			parsed.provider as "acg" | "dujiao_next" | "gmshop_edge" | "dhru",
 		) ||
 		!parsed.normalizedApiOrigin ||
 		!parsed.protocolVersion ||
@@ -625,4 +892,66 @@ function isUncertainError(error: unknown) {
 
 function errorCode(error: unknown) {
 	return error instanceof DomainError ? error.code : "supplier_request_failed";
+}
+
+async function serviceQuote(
+	adapter: import("../providers/types").SupplierAdapter,
+	productId: string,
+) {
+	if (!adapter.getServiceQuote)
+		throw new DomainError(
+			"supplier_service_not_ready",
+			409,
+			"Provider does not support service quotes",
+			{ retryable: false },
+		);
+	const quote = await adapter.getServiceQuote(productId);
+	return { ...quote, active: true, stockQuantity: 0 };
+}
+async function loadServiceInput(
+	db: D1Database,
+	orderItemId: string,
+	snapshot: BindingSnapshot,
+	secret: string,
+) {
+	const item = await db
+		.prepare(
+			"SELECT delivery_component_type, input_values_json, sensitive_input_values_json FROM shop_order_items WHERE id = ?",
+		)
+		.bind(orderItemId)
+		.first<{
+			delivery_component_type: string;
+			input_values_json: string;
+			sensitive_input_values_json: string;
+		}>();
+	if (item?.delivery_component_type !== "service") {
+		if (snapshot.provider === "dhru")
+			throw new DomainError(
+				"supplier_delivery_type_mismatch",
+				409,
+				"Dhru requires a service product",
+				{ retryable: false },
+			);
+		return undefined;
+	}
+	const inputData = JSON.parse(item.input_values_json) as Record<
+		string,
+		string
+	>;
+	const sensitive = JSON.parse(item.sensitive_input_values_json) as Record<
+		string,
+		{ envelope: string }
+	>;
+	for (const [key, value] of Object.entries(sensitive))
+		inputData[key] = await decryptSecret(value.envelope, secret, "order-input");
+	return supplierServiceOrderInputSchema.parse({
+		productId: snapshot.upstreamProductId,
+		inputData,
+	});
+}
+function serviceCallbackUrl(origin: string, accountId: string) {
+	return new URL(
+		`/api/suppliers/dhru/callback/${encodeURIComponent(accountId)}`,
+		origin,
+	).toString();
 }
