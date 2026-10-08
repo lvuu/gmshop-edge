@@ -4,6 +4,7 @@ import { processDelivery } from "#/features/fulfillment/server/process";
 import { completeManualStoreOrder } from "#/features/shop-payments/server/service";
 import { revealStoreDelivery } from "#/features/storefront/server/delivery-reveal";
 import { createMultiStoreOrder } from "#/features/storefront/server/multi-order";
+import { getStoreOrder } from "#/features/storefront/server/order-query";
 import { createSupplierCredentialVault } from "#/features/suppliers/secrets";
 import { handleDhruSupplierCallback } from "#/features/suppliers/server/dhru-callback";
 import { processSupplierOrder } from "#/features/suppliers/server/process";
@@ -207,6 +208,91 @@ describe("service products", { timeout: 30_000 }, () => {
 				email: "buyer@example.com",
 			}),
 		).resolves.toMatchObject({ content: "Status: Clean" });
+		await db.prepare("UPDATE entitlement_grants SET status = 'revoked'").run();
+		expect(
+			(
+				await getStoreOrder(db, {
+					orderNumber: order.orderNumber,
+					email: "buyer@example.com",
+				})
+			).deliveries[0]?.hasContent,
+		).toBe(false);
+		await expect(
+			revealStoreDelivery(db, {
+				orderNumber: order.orderNumber,
+				deliveryId: supplier.delivery_record_id,
+				email: "buyer@example.com",
+			}),
+		).rejects.toMatchObject({ code: "delivery_not_found" });
+		await db.prepare("UPDATE entitlement_grants SET status = 'active'").run();
+		await db
+			.prepare("UPDATE shop_orders SET status = 'refunded' WHERE id = ?")
+			.bind(order.id)
+			.run();
+		expect(
+			(
+				await getStoreOrder(db, {
+					orderNumber: order.orderNumber,
+					email: "buyer@example.com",
+				})
+			).deliveries[0]?.hasContent,
+		).toBe(false);
+		await expect(
+			revealStoreDelivery(db, {
+				orderNumber: order.orderNumber,
+				deliveryId: supplier.delivery_record_id,
+				email: "buyer@example.com",
+			}),
+		).rejects.toMatchObject({ code: "delivery_not_found" });
+	});
+
+	it("shows terminal procurement failure and clears it after manual reselection", async () => {
+		const order = await checkout();
+		await pay(order.id);
+		await db
+			.prepare(
+				"UPDATE supplier_orders SET state = 'failed', last_error_code = 'private-provider-error' WHERE order_id = ?",
+			)
+			.bind(order.id)
+			.run();
+		const failed = await getStoreOrder(db, {
+			orderNumber: order.orderNumber,
+			email: "buyer@example.com",
+		});
+		expect(failed.deliveries[0]).toMatchObject({
+			type: "service",
+			status: "failed",
+			hasContent: false,
+		});
+		expect(JSON.stringify(failed)).not.toContain("private-provider-error");
+		expect(
+			await db
+				.prepare(
+					"SELECT dr.status FROM delivery_records dr JOIN shop_order_items oi ON oi.id = dr.order_item_id WHERE oi.order_id = ?",
+				)
+				.bind(order.id)
+				.first("status"),
+		).toBe("awaiting_supply");
+		await db
+			.prepare(
+				"UPDATE supplier_orders SET state = 'pending' WHERE order_id = ?",
+			)
+			.bind(order.id)
+			.run();
+		const retry = await getStoreOrder(db, {
+			orderNumber: order.orderNumber,
+			email: "buyer@example.com",
+		});
+		expect(retry.deliveries[0]?.status).toBe("awaiting_supply");
+		const plan = await db
+			.prepare(
+				"EXPLAIN QUERY PLAN SELECT 1 FROM supplier_orders WHERE order_item_id = ? AND delivery_record_id = ? AND state = 'failed'",
+			)
+			.bind("item", "delivery")
+			.all();
+		expect(JSON.stringify(plan.results)).toContain(
+			"supplier_orders_order_item_uidx",
+		);
 	});
 
 	it("decrypts only the immutable customer input snapshot at submission", async () => {

@@ -1104,7 +1104,7 @@
 	"store_automation_cancel": "取消执行",
 	"store_automation_retry": "重新执行",
 	"status_dispatching": "派发中",
-	"store_delivery_reveal_failed": "无法查看凭证",
+	"store_delivery_reveal_failed": "无法查看交付内容",
 	"store_payment_retry_failed": "无法重试支付",
 	"store_order_payment_remaining": "请在 {time} 内完成支付",
 	"store_order_payment_expired": "订单支付时间已结束",

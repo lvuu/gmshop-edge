@@ -81,3 +81,21 @@ The service product page explains that processing begins after payment and resul
 Rendered component checks cover both locales, mixed stock/service deliveries, completed-result exclusion, and HTML escaping. Final validation passed: 733 unit/security, 283 integration and 23 Bun runtime tests (1,039 total); two existing TODO tests remain unexecuted. Typecheck, Biome and both Workers/Bun builds passed. Browser checks for themes, mobile and keyboard remain pending; these checks do not place a real supplier order.
 
 组件渲染检查覆盖两种语言、卡密与服务混合交付、已交付结果不再显示处理中，以及 HTML 转义。全量检查通过：733 项单元及安全测试、283 项集成测试、23 项 Bun 运行时测试，共 1,039 项；原有两项 TODO 未执行。类型检查、Biome 和 Workers/Bun 构建通过；主题、手机和键盘的浏览器验证尚待完成，不会由这些检查触发真实供应商订单。
+
+## Failed procurement and result recovery / 采购失败与结果恢复
+
+Customer order queries present an awaiting service delivery as failed when its matching supplier order is terminally failed. The correlation uses the unique order-item index and also checks the delivery ID; it does not scan all procurement orders, expose the provider's error, or alter delivery/payment state. Manual reselection to pending automatically restores the progress display.
+
+客户订单查询在对应采购任务终止失败时，将等待供应商的服务交付展示为失败。关联使用订单项唯一索引，并核对交付 ID；不扫描全部采购任务，不暴露上游错误，也不更改交付或支付状态。管理员重新选择采购账户、任务恢复待处理后，客户进度提示随之恢复。
+
+Private result reads now clear displayed content whenever the order, delivery or guest proof changes, abort superseded requests and ignore late responses even when transport cancellation is ignored. React StrictMode effect replay still loads correctly. Network failures, denied reads and blank responses show an accessible retry action. Order queries also hide service-result availability after refund or grant revocation, allowing refreshed screens to unmount a previously displayed result. The retry uses the current proof and the same server authorization; it cannot resubmit a supplier purchase. Copy audit transport failures do not produce an unhandled rejection.
+
+私有结果读取在订单、交付或访客凭据改变时立即隐藏原内容，取消已被替代的请求，即使传输层忽略取消也不会采纳迟到响应。React StrictMode 重放后仍可正常加载。网络失败、权限拒绝及空响应提供可访问的重试按钮；订单查询也在退款或权益撤销后隐藏服务结果入口，使刷新后的页面卸载先前已展示的结果。重试使用当前凭据及现有服务端校验，不会重新提交供应商采购。复制审计的网络失败不会产生未处理的异常。
+
+Checks cover stale responses, changed proofs, retry, effect replay, blank responses, failed/reselected procurement, indexed correlation, and refusal to reveal service results after grant revocation or refund. Browser theme/mobile/keyboard checks remain pending; real supplier purchase and production deployment are outside this change.
+
+检查覆盖迟到响应、凭据改变、重试、效果重放、空响应、采购失败及重新选择、索引关联，以及权益撤销或退款后拒绝读取服务结果。主题、手机和键盘浏览器验证仍待完成；本次修改不进行真实采购或生产部署。
+
+Validation: 738 unit/security, 284 integration and 23 Bun runtime tests passed (1,045 total); two existing TODO tests were not executed. Typecheck and Biome passed, with existing unrelated Biome notices.
+
+验证：738 项单元及安全测试、284 项集成测试、23 项 Bun 运行时测试通过，共 1,045 项；原有两项 TODO 未执行。类型检查和 Biome 通过，保留已有无关 Biome 提示。

@@ -1104,7 +1104,7 @@
 	"store_automation_cancel": "Cancel run",
 	"store_automation_retry": "Run again",
 	"status_dispatching": "Dispatching",
-	"store_delivery_reveal_failed": "Credential could not be viewed",
+	"store_delivery_reveal_failed": "Delivery content could not be viewed",
 	"store_payment_retry_failed": "Unable to retry payment",
 	"store_order_payment_remaining": "Complete payment within {time}",
 	"store_order_payment_expired": "The payment window for this order has ended",
