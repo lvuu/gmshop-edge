@@ -126,6 +126,8 @@ export class DhruAdapter implements SupplierAdapter {
 		input: Parameters<SupplierAdapter["reconcileOrder"]>[0],
 	): Promise<SupplierPurchaseResult> {
 		if (!input.service) throw serviceNotReady();
+		if (!supplierServiceOrderInputSchema.safeParse(input.service).success)
+			throw invalidServiceInput();
 		if (!input.upstreamOrderId)
 			return {
 				status: "uncertain",

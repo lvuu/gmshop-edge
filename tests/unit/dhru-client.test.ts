@@ -164,6 +164,56 @@ describe("Dhru Client", () => {
 		});
 		expect(fetcher).toHaveBeenCalledTimes(1);
 	});
+	it.each(["bad/id", "bad id", "bad\nheader", "x".repeat(101)])(
+		"does not accept an unqueryable receipt UUID %s",
+		async (uuid) => {
+			const { client, fetcher } = setup([
+				[
+					{
+						order_uuid: uuid,
+						reference_id: input.referenceId,
+						amount: "1.00",
+						currency_code: "USD",
+					},
+				],
+			]);
+			await expect(client.submitOrder(input)).rejects.toMatchObject({
+				outcome: "uncertain",
+			});
+			expect(fetcher).toHaveBeenCalledTimes(1);
+		},
+	);
+	it.each([999, "999", null, { private: "data" }])(
+		"rejects an inconsistent echoed product ID %j",
+		async (product_id) => {
+			const { client, fetcher } = setup({ product_id, name: "Wrong service" });
+			await expect(client.getProduct(123)).rejects.toMatchObject({
+				outcome: "read_failed",
+			});
+			expect(fetcher).toHaveBeenCalledTimes(1);
+		},
+	);
+	it("compares the selected identifier style without confusing numeric IDs and UUIDs", async () => {
+		const uuid = "550e8400-e29b-41d4-a716-446655440000";
+		const data = { product_id: "123", product_uuid: uuid };
+		await expect(setup(data).client.getProduct(123)).resolves.toEqual(data);
+		await expect(
+			setup(data).client.getProduct(uuid.toUpperCase()),
+		).resolves.toEqual(data);
+		await expect(
+			setup(data).client.getProduct("550e8400-e29b-41d4-a716-446655440001"),
+		).rejects.toMatchObject({ outcome: "read_failed" });
+	});
+	it("refuses an explicitly different order UUID while preserving the documented response shape", async () => {
+		const data = { quantity: 1, status: "success", replay: "Private result" };
+		await expect(
+			setup({ ...data, order_uuid: "OTHER" }).client.getOrder("D1"),
+		).rejects.toMatchObject({ outcome: "read_failed" });
+		await expect(
+			setup({ ...data, order_uuid: "D1" }).client.getOrder("D1"),
+		).resolves.toMatchObject(data);
+		await expect(setup(data).client.getOrder("D1")).resolves.toEqual(data);
+	});
 	it("rejects invalid input before sending any order", async () => {
 		const { client, fetcher } = setup({});
 		await expect(

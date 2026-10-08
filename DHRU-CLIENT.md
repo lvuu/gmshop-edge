@@ -80,7 +80,7 @@ runner after review, not by editing an existing production baseline.
 
 This is account registration only. Catalog import, SKU lookup, stock purchasing
 and stock reconciliation fail explicitly with supplier_service_not_ready before
-making any Dhru call. Service fulfillment and field mapping remain later work.
+making any Dhru call. Service fulfillment and supported input-field mapping are implemented; see SUPPLIER-RESULTS.md for the current product, queue, binding and result flow.
 The previous Client methods can still be called directly from server code.
 
 新增 dhru Provider、apiToken 凭据校验和 Factory 分派；后台账号表单提供
@@ -102,3 +102,17 @@ for the current boundary, remaining queue wiring and validation.
 
 服务提交与查询现支持显式 service 快照，目录与卡密 SKU 入口仍关闭。
 当前实现边界及未完成接线以 DHRU-SERVICE-INTEGRATION.md 为准。
+
+## Identity checks / 身份核验
+
+Product lookup compares an echoed numeric product_id or product_uuid with the requested identifier, choosing the field that matches the request's identifier style. Numeric IDs returned as strings are accepted; UUID case differences are accepted. An explicitly invalid/mismatched echoed identifier fails the read before binding or paid preflight. A response without the applicable identifier remains compatible, so this check cannot establish additional identity when the supplier omits it. Vendor fields are otherwise preserved.
+
+商品查询根据请求 ID 的形式，核对回传的数字 product_id 或 product_uuid。数字 ID 允许字符串形式，UUID 大小写差异允许。明确无效或不匹配的回传 ID 在绑定或付费预检查前作为读取失败处理。若供应商省略对应 ID，仍兼容该响应，因此无法利用缺失字段额外确认身份；其他供应商扩展字段保留。
+
+Submission receipts and order lookups share the same bounded order UUID format (1–100 ASCII letters, digits or hyphens). An invalid receipt is uncertain and cannot authorize a resubmission. The official single-order response documents quantity, replay and status, without an echoed order UUID; that shape remains accepted. If an extension explicitly returns order_uuid, it must match the requested opaque order ID exactly. A mismatch is a read failure; the adapter preserves the original UUID and selected account and never delivers the mismatched result. Reconciliation validates the service-input snapshot before contacting the supplier.
+
+提交回执与订单查询共用相同订单号格式：1–100 个 ASCII 字母、数字或连字符。无效回执作为结果不确定处理，不允许据此重新提交。官方单订单响应记录数量、结果和状态，未回传订单号；该结构继续兼容。若扩展响应明确包含 order_uuid，须与查询的原始订单号完全一致。不匹配作为读取失败，适配器保留原订单号及采购账户，不交付错误结果。状态查询也在联系供应商前校验服务输入快照。
+
+Contract reference: https://github.com/dhru-com/reseller-api (single-order example and identifier rules reviewed). Tests use mocked upstream responses; no live paid order is placed.
+
+合约依据：https://github.com/dhru-com/reseller-api，已核对单订单示例与标识规则。测试仅模拟上游响应，不执行真实付费订单。

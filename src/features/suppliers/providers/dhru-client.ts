@@ -5,6 +5,11 @@ import {
 	type OutboundFetchOptions,
 } from "#/server/outbound-fetch";
 
+const orderUuid = z
+	.string()
+	.min(1)
+	.max(100)
+	.regex(/^[A-Za-z0-9-]+$/);
 const decimal = z.string().regex(/^\d+(?:\.\d+)?$/);
 const account = z
 	.object({
@@ -42,6 +47,7 @@ const catalog = z
 	.passthrough();
 const order = z
 	.object({
+		order_uuid: orderUuid.optional(),
 		quantity: z.number().int().positive(),
 		replay: z.string(),
 		status: z.enum([
@@ -64,7 +70,7 @@ const submitted = z
 			.array(
 				z
 					.object({
-						order_uuid: z.string().min(1),
+						order_uuid: orderUuid,
 						reference_id: z.string().min(1),
 						amount: z.union([decimal, z.number().finite().nonnegative()]),
 						currency_code: z.string().min(1),
@@ -164,21 +170,33 @@ export class DhruClient {
 		return this.request("/products", catalog);
 	}
 	/** Returns the complete product endpoint data, preserving IDs and vendor extensions. */
-	getProduct(productId: string | number) {
+	async getProduct(productId: string | number) {
 		const id = identifier.parse(productId);
-		return this.request(
+		const result = await this.request(
 			`/products?product_id=${encodeURIComponent(String(id))}`,
 			z.record(z.string(), z.unknown()),
 		);
+		const key = /^\d+$/.test(String(id)) ? "product_id" : "product_uuid";
+		if (key in result) {
+			const echoed = identifier.safeParse(result[key]);
+			if (
+				!echoed.success ||
+				String(echoed.data).toLowerCase() !== String(id).toLowerCase()
+			)
+				throw new DhruClientError("read_failed");
+		}
+		return result;
 	}
-	getOrder(orderUuid: string): Promise<DhruOrder> {
-		const id = z
-			.string()
-			.min(1)
-			.max(100)
-			.regex(/^[A-Za-z0-9-]+$/)
-			.parse(orderUuid);
-		return this.request(`/order?order_uuid=${encodeURIComponent(id)}`, order);
+	async getOrder(uuid: string): Promise<DhruOrder> {
+		const id = orderUuid.parse(uuid);
+		const result = await this.request(
+			`/order?order_uuid=${encodeURIComponent(id)}`,
+			order,
+		);
+		// The documented single-order response omits this ID. Check it when echoed.
+		if (result.order_uuid !== undefined && result.order_uuid !== id)
+			throw new DhruClientError("read_failed");
+		return result;
 	}
 	async submitOrder(input: DhruSubmitInput) {
 		const value = orderInput.parse(input);

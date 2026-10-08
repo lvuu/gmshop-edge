@@ -297,6 +297,158 @@ describe("service products", { timeout: 30_000 }, () => {
 		);
 	});
 
+	it("refuses a mismatched product record before binding or paid procurement", async () => {
+		const wrongProduct: typeof fetch = async (input, init) => {
+			const response = await fetcher(input, init);
+			if (new URL(String(input)).pathname.endsWith("/products")) {
+				const body = (await response.json()) as {
+					data: Record<string, unknown>;
+				};
+				body.data.product_id = 999;
+				return Response.json(body);
+			}
+			return response;
+		};
+		const count = () =>
+			db.prepare("SELECT COUNT(*) AS n FROM supplier_bindings").first("n");
+		const before = await count();
+		await expect(
+			previewServiceSupplier(
+				db,
+				{
+					sellableItemId: itemId,
+					accountId,
+					expectedRevision: 1,
+					productId: "123",
+					maxCostMinor: "150",
+				},
+				{ fetcher: wrongProduct },
+			),
+		).rejects.toMatchObject({ outcome: "read_failed" });
+		expect(await count()).toBe(before);
+		const order = await checkout();
+		await pay(order.id);
+		const supplier = await db
+			.prepare("SELECT id FROM supplier_orders WHERE order_id = ?")
+			.bind(order.id)
+			.first<{ id: string }>();
+		if (!supplier) throw new Error("missing supplier");
+		await expect(
+			processSupplierOrder(db, supplier.id, { fetcher: wrongProduct }),
+		).rejects.toMatchObject({ code: "supplier_accounts_exhausted" });
+		expect(posts).toBe(0);
+	});
+	it("holds an explicitly wrong queried order and later delivers the correct order without another POST", async () => {
+		const order = await checkout();
+		await pay(order.id);
+		const supplier = await db
+			.prepare(
+				"SELECT id, delivery_record_id FROM supplier_orders WHERE order_id = ?",
+			)
+			.bind(order.id)
+			.first<{ id: string; delivery_record_id: string }>();
+		if (!supplier) throw new Error("missing supplier");
+		await expect(
+			processSupplierOrder(db, supplier.id, { fetcher }),
+		).rejects.toMatchObject({ code: "supplier_order_pending" });
+		const wrongOrder: typeof fetch = async (input, init) => {
+			if (new URL(String(input)).pathname.endsWith("/order"))
+				return Response.json({
+					status: "success",
+					code: 200,
+					data: {
+						quantity: 1,
+						status: "success",
+						order_uuid: "OTHER",
+						replay: "Wrong private result",
+					},
+				});
+			return fetcher(input, init);
+		};
+		await expect(
+			processSupplierOrder(db, supplier.id, { fetcher: wrongOrder }),
+		).rejects.toMatchObject({ code: "supplier_order_pending" });
+		expect(
+			await db
+				.prepare(
+					"SELECT state, upstream_order_id, last_error_code FROM supplier_orders WHERE id = ?",
+				)
+				.bind(supplier.id)
+				.first(),
+		).toMatchObject({
+			state: "uncertain",
+			upstream_order_id: "D1",
+			last_error_code: "dhru_order_read_failed",
+		});
+		expect(
+			await db
+				.prepare("SELECT content_encrypted FROM delivery_records WHERE id = ?")
+				.bind(supplier.delivery_record_id)
+				.first("content_encrypted"),
+		).toBeNull();
+		expect(
+			await db
+				.prepare(
+					"SELECT COUNT(*) AS n FROM outbox_events WHERE event_type = 'delivery.requested'",
+				)
+				.first("n"),
+		).toBe(0);
+		await processSupplierOrder(db, supplier.id, { fetcher });
+		await processDelivery(db, supplier.delivery_record_id);
+		await expect(
+			revealStoreDelivery(db, {
+				orderNumber: order.orderNumber,
+				deliveryId: supplier.delivery_record_id,
+				email: "buyer@example.com",
+			}),
+		).resolves.toMatchObject({ content: "Status: Clean" });
+		expect(posts).toBe(1);
+	});
+	it("locks an invalid receipt UUID as uncertain without querying or resubmitting it", async () => {
+		const order = await checkout();
+		await pay(order.id);
+		const supplier = await db
+			.prepare("SELECT id FROM supplier_orders WHERE order_id = ?")
+			.bind(order.id)
+			.first<{ id: string }>();
+		if (!supplier) throw new Error("missing supplier");
+		let gets = 0;
+		const invalidReceipt: typeof fetch = async (input, init) => {
+			const response = await fetcher(input, init);
+			if (new URL(String(input)).pathname.endsWith("/order")) {
+				if (init?.method === "POST") {
+					const body = (await response.json()) as {
+						data: { order_uuid: string }[][];
+					};
+					const receipt = body.data[0]?.[0];
+					if (!receipt) throw new Error("missing receipt");
+					receipt.order_uuid = "bad/order";
+					return Response.json(body);
+				}
+				gets++;
+			}
+			return response;
+		};
+		for (let attempt = 0; attempt < 2; attempt++)
+			await expect(
+				processSupplierOrder(db, supplier.id, { fetcher: invalidReceipt }),
+			).rejects.toMatchObject({ code: "supplier_order_pending" });
+		expect(
+			await db
+				.prepare(
+					"SELECT state, selected_account_id, upstream_order_id FROM supplier_orders WHERE id = ?",
+				)
+				.bind(supplier.id)
+				.first(),
+		).toMatchObject({
+			state: "uncertain",
+			selected_account_id: accountId,
+			upstream_order_id: null,
+		});
+		expect(posts).toBe(1);
+		expect(gets).toBe(0);
+	});
+
 	const adminAudit = () => ({
 		request: new Request("https://shop.example/admin/suppliers/orders"),
 		actorUserId: accountId,

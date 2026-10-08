@@ -1,5 +1,9 @@
 # Dhru service integration / Dhru 服务订单接入
 
+Current implementation: formal service products, manual single-product binding, encrypted input snapshots, paid-only supplier queue, authenticated polling and private customer results are implemented. The sections below describe the earlier adapter stage; SUPPLIER-RESULTS.md is the current end-to-end implementation record. Unknown-UUID recovery, full catalog sync and file/remote-specific delivery remain deferred.
+
+当前实现：正式 service 商品、单服务手工绑定、加密输入快照、付款后采购队列、认证轮询和客户私有结果已实现。下文记录较早的适配器阶段；SUPPLIER-RESULTS.md 记录当前完整流程。未知订单号恢复、全量目录同步和文件/远程服务的专用交付仍待实现。
+
 ## Current implementation
 
 `DhruAdapter.submitOrder()` and `reconcileOrder()` now accept an explicit

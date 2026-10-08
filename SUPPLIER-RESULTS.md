@@ -139,3 +139,17 @@ The final run exposed an existing supplier-API authentication test dependency on
 Final feedback validation: 742 unit/security, 290 integration and 23 Bun runtime tests passed (1,055 total); two existing TODO tests remain unexecuted. Typecheck, Biome and both Workers/Bun builds passed.
 
 最终反馈验证：742 项单元及安全测试、290 项集成测试、23 项 Bun 运行时测试通过，共 1,055 项；原有两项 TODO 未执行。类型检查、Biome 及 Workers/Bun 构建通过。
+
+## Upstream identity boundaries / 上游身份边界
+
+Dhru product reads reject an explicitly mismatched echoed ID before binding or purchase preflight. Submitted order UUIDs must satisfy the same format accepted by single-order GET. Authenticated GET still accepts the documented response without identity fields, checks quantity as before, and refuses an explicitly different echoed order_uuid if present. Service-input snapshots are validated before both submit and reconcile. Read failures retain the original locked purchase instead of delivering or POSTing again; fixed provider error labels are localized through existing messages.
+
+Dhru 商品读取在绑定或采购预检查前拒绝明确不匹配的回传 ID。提交得到的订单号须符合单订单 GET 的相同格式。认证 GET 仍接受官方不含身份字段的响应，保留数量检查；若明确回传不同 order_uuid，则拒绝该结果。提交和状态查询前都校验服务输入快照。读取失败保留原锁定采购，不交付也不再次 POST；固定供应商错误代码沿用现有本地化消息。
+
+Checks cover numeric/UUID identifier styles, malformed receipts, optional echoed order IDs and invalid snapshots. D1 integration checks show wrong product reads cannot bind or purchase, wrong-order results create no delivery content/outbox, and a later correct query delivers with one POST. Invalid receipt IDs remain uncertain with no GET or resubmission. No schema migration, production deployment or real purchase is part of this change. Browser checks remain pending.
+
+检查覆盖数字与 UUID 两种标识、无效回执、可选回传订单号和无效输入快照。D1 集成检查验证错误商品不能绑定或采购，错误订单结果不生成交付内容或事件，后续正确查询仍仅使用一次 POST 即可交付。无效回执订单号保持结果不确定，不执行 GET 或重下单。本轮不增加数据库迁移、不部署生产环境或执行真实采购。浏览器检查仍待完成。
+
+Identity validation: 753 unit/security, 293 integration and 23 Bun runtime tests passed (1,069 total); two existing TODO tests remain unexecuted and the manual provider smoke file is skipped. Typecheck, Biome and Workers/Bun builds passed.
+
+身份校验验证：753 项单元及安全测试、293 项集成测试、23 项 Bun 运行时测试通过，共 1,069 项；原有两项 TODO 未执行，真实供应商手工测试文件跳过。类型检查、Biome 及 Workers/Bun 构建通过。

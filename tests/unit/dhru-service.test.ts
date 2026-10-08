@@ -128,6 +128,17 @@ describe("Dhru service orders", () => {
 			expect(submit).toHaveBeenCalledTimes(1);
 		},
 	);
+	it("validates the immutable service input before any reconciliation request", async () => {
+		const get = vi.spyOn(DhruClient.prototype, "getOrder");
+		await expect(
+			adapter().reconcileOrder({
+				...input,
+				upstreamOrderId: "D1",
+				service: { productId: 123, inputData: { reference_id: "override" } },
+			}),
+		).rejects.toMatchObject({ code: "supplier_service_input_invalid" });
+		expect(get).not.toHaveBeenCalled();
+	});
 	it("keeps a missing order ID uncertain without sending any request", async () => {
 		const get = vi.spyOn(DhruClient.prototype, "getOrder");
 		const submit = vi.spyOn(DhruClient.prototype, "submitOrder");
