@@ -1667,5 +1667,10 @@
 	"supplier_service_preview_review": "绑定前请检查服务名称、单位成本和必填字段。上游发生变化时需要重新预览。",
 	"supplier_service_field_optional": "选填",
 	"supplier_service_field_imei": "15 位 IMEI",
-	"supplier_service_fields_none": "此服务无需客户填写字段。"
+	"supplier_service_fields_none": "此服务无需客户填写字段。",
+	"store_delivery_promise_service": "付款后自动开始处理，完成后可在订单中查看结果",
+	"store_service_result": "服务结果",
+	"store_service_one_time": "一次性服务",
+	"store_service_processing": "服务正在处理中，完成后结果将自动显示在此处。",
+	"store_service_failed": "服务未能完成，请提供订单号联系客服。"
 }

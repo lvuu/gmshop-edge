@@ -71,3 +71,13 @@ POST `/api/admin/suppliers/service-binding` (same-origin authenticated admin, bo
 Dhru service availability does not infer inventory from `stock_quantity` or expire the manual binding after 30 minutes. Before POST, the worker fetches a fresh account balance and a product quote and enforces the snapshotted cost cap. A selected account only reconciles thereafter; uncertain submission is never automatically POSTed again. Unsigned Dhru feedback only accelerates an authenticated GET for an already-known order UUID; it cannot deliver, alter the UUID, or supply customer result text. Migration `0008_service_products.sql` preserves the three rebuilt parent tables and their cascading children under D1 foreign-key enforcement.
 
 Dhru 服务可用性不依赖库存数，也不会让手工绑定在 30 分钟后自动失效。采购前实时读取账户余额和单个产品报价，并检查订单保存的成本上限。选定账户后仅查询订单；不确定的提交不会自动再次 POST。未签名回调只能提前查询已知上游订单，不能交付结果、更换订单 UUID 或直接写入结果文本。迁移 `0008_service_products.sql` 在 D1 外键约束下保留重建父表及其级联子表。
+
+## Customer service progress / 客户服务进度
+
+The service product page explains that processing begins after payment and results appear on the order. Paid/fulfilling orders show localized progress for service deliveries awaiting supply, pending, or processing, and a support message for failed delivery. Existing visible-page polling updates the result; completed deliveries retain the private reveal endpoint. Customer entitlements identify service results as one-time service instead of unlimited quota, and use a service-result dialog label. No supplier credentials or unverified callback content is rendered.
+
+服务商品页说明付款后自动处理，完成后在订单中查看结果。已付款或履约中的订单显示服务等待供应商、待交付、处理中状态的提示；失败时提示凭订单号联系客服。沿用可见页面自动轮询，完成后通过现有私有接口读取结果。客户权益显示“一次性服务”，不再误示无限次数；结果弹窗使用“服务结果”标题。不展示供应商凭据或未验证的回调内容。
+
+Rendered component checks cover both locales, mixed stock/service deliveries, completed-result exclusion, and HTML escaping. Final validation passed: 733 unit/security, 283 integration and 23 Bun runtime tests (1,039 total); two existing TODO tests remain unexecuted. Typecheck, Biome and both Workers/Bun builds passed. Browser checks for themes, mobile and keyboard remain pending; these checks do not place a real supplier order.
+
+组件渲染检查覆盖两种语言、卡密与服务混合交付、已交付结果不再显示处理中，以及 HTML 转义。全量检查通过：733 项单元及安全测试、283 项集成测试、23 项 Bun 运行时测试，共 1,039 项；原有两项 TODO 未执行。类型检查、Biome 和 Workers/Bun 构建通过；主题、手机和键盘的浏览器验证尚待完成，不会由这些检查触发真实供应商订单。

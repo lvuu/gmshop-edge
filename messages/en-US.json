@@ -1667,5 +1667,10 @@
 	"supplier_service_preview_review": "Review the service, unit cost and required fields before binding. Upstream changes require a new preview.",
 	"supplier_service_field_optional": "Optional",
 	"supplier_service_field_imei": "15-digit IMEI",
-	"supplier_service_fields_none": "This service requires no customer fields."
+	"supplier_service_fields_none": "This service requires no customer fields.",
+	"store_delivery_promise_service": "Processing starts automatically after payment; results appear on your order when ready",
+	"store_service_result": "Service result",
+	"store_service_one_time": "One-time service",
+	"store_service_processing": "Your service is processing. The result will appear here automatically when ready.",
+	"store_service_failed": "The service could not be completed. Contact support with your order number."
 }

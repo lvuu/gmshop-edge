@@ -6,6 +6,7 @@ import {
 	ArrowRight,
 	Boxes,
 	CalendarDays,
+	ClipboardCheck,
 	Download,
 	Eye,
 	FileDown,
@@ -576,7 +577,9 @@ function EntitlementCard({
 			? KeyRound
 			: entitlement.type === "download"
 				? FileDown
-				: WandSparkles;
+				: entitlement.type === "service"
+					? ClipboardCheck
+					: WandSparkles;
 	const remaining =
 		entitlement.usageLimit !== null
 			? m.store_account_entitlement_times({
@@ -652,10 +655,14 @@ function EntitlementCard({
 			<div className="mt-7 flex flex-1 items-end justify-between gap-6">
 				<div>
 					<p className="text-muted-foreground text-xs">
-						{m.store_account_entitlement_quota()}
+						{entitlement.type === "service"
+							? m.store_service_result()
+							: m.store_account_entitlement_quota()}
 					</p>
 					<p className="mt-1 font-semibold text-2xl tracking-tight">
-						{remaining}
+						{entitlement.type === "service"
+							? m.store_service_one_time()
+							: remaining}
 					</p>
 				</div>
 				<div className="min-w-0 text-right">
@@ -736,7 +743,7 @@ function AccountEntitlementActions({
 							asset.accessCount < asset.accessLimit),
 				)
 			: [];
-	const stockDelivery =
+	const textDelivery =
 		entitlement.type === "stock" || entitlement.type === "service"
 			? data.deliveries.find(
 					(delivery) =>
@@ -779,26 +786,32 @@ function AccountEntitlementActions({
 			}),
 		]);
 	}
-	if (!stockDelivery && !downloads.length && !automation) return null;
+	if (!textDelivery && !downloads.length && !automation) return null;
 	return (
 		<div className="mt-6 flex min-h-9 flex-wrap items-end gap-2">
-			{stockDelivery ? (
+			{textDelivery ? (
 				<Dialog>
 					<DialogTrigger asChild>
 						<Button size="sm">
 							<Eye />
-							{m.store_reveal_delivery()}
+							{entitlement.type === "service"
+								? m.store_service_result()
+								: m.store_reveal_delivery()}
 						</Button>
 					</DialogTrigger>
 					<DialogContent className="sm:max-w-lg">
 						<DialogHeader>
-							<DialogTitle>{m.store_reveal_delivery()}</DialogTitle>
+							<DialogTitle>
+								{entitlement.type === "service"
+									? m.store_service_result()
+									: m.store_reveal_delivery()}
+							</DialogTitle>
 							<DialogDescription>
 								{entitlement.productName} · {entitlement.sellableItemName}
 							</DialogDescription>
 						</DialogHeader>
 						<DeliveryRevealContent
-							deliveryId={stockDelivery.id}
+							deliveryId={textDelivery.id}
 							orderNumber={entitlement.orderNumber}
 						/>
 					</DialogContent>
