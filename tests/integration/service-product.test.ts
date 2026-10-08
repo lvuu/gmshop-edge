@@ -449,6 +449,105 @@ describe("service products", { timeout: 30_000 }, () => {
 		expect(gets).toBe(0);
 	});
 
+	it("retains an accepted receipt when its first persistence fails and reconciles without another purchase", async () => {
+		const order = await checkout();
+		await pay(order.id);
+		const supplier = await db
+			.prepare(
+				"SELECT id, delivery_record_id FROM supplier_orders WHERE order_id = ?",
+			)
+			.bind(order.id)
+			.first<{ id: string; delivery_record_id: string }>();
+		if (!supplier) throw new Error("missing supplier");
+		await db
+			.prepare(`CREATE TRIGGER fail_processing_receipt
+		 BEFORE UPDATE ON supplier_orders
+		 WHEN NEW.last_error_code = 'supplier_order_processing'
+		 BEGIN SELECT RAISE(ABORT, 'receipt write unavailable'); END`)
+			.run();
+		await expect(
+			processSupplierOrder(db, supplier.id, { fetcher }),
+		).rejects.toMatchObject({ code: "supplier_request_uncertain" });
+		expect(
+			await db
+				.prepare("SELECT * FROM supplier_orders WHERE id = ?")
+				.bind(supplier.id)
+				.first(),
+		).toMatchObject({
+			state: "uncertain",
+			selected_account_id: accountId,
+			selected_credentials_revision: 1,
+			upstream_order_id: "D1",
+			selection_count: 1,
+			attempt_count: 1,
+			last_error_code: "supplier_request_uncertain",
+		});
+		await processSupplierOrder(db, supplier.id, { fetcher });
+		await processDelivery(db, supplier.delivery_record_id);
+		await expect(
+			revealStoreDelivery(db, {
+				orderNumber: order.orderNumber,
+				deliveryId: supplier.delivery_record_id,
+				email: "buyer@example.com",
+			}),
+		).resolves.toMatchObject({ content: "Status: Clean" });
+		expect(posts).toBe(1);
+	});
+
+	it("keeps the selected account when even uncertainty persistence fails and never submits again", async () => {
+		const order = await checkout();
+		await pay(order.id);
+		const supplier = await db
+			.prepare("SELECT id FROM supplier_orders WHERE order_id = ?")
+			.bind(order.id)
+			.first<{ id: string }>();
+		if (!supplier) throw new Error("missing supplier");
+		await db
+			.prepare(`CREATE TRIGGER fail_all_receipt_writes
+		 BEFORE UPDATE ON supplier_orders WHEN NEW.state = 'uncertain'
+		 BEGIN SELECT RAISE(ABORT, 'receipt write unavailable'); END`)
+			.run();
+		await expect(
+			processSupplierOrder(db, supplier.id, { fetcher }),
+		).rejects.toThrow();
+		expect(
+			await db
+				.prepare("SELECT * FROM supplier_orders WHERE id = ?")
+				.bind(supplier.id)
+				.first(),
+		).toMatchObject({
+			state: "submitting",
+			selected_account_id: accountId,
+			selected_credentials_revision: 1,
+			upstream_order_id: null,
+			selection_count: 1,
+			attempt_count: 1,
+		});
+		await db.prepare("DROP TRIGGER fail_all_receipt_writes").run();
+		let reads = 0;
+		await expect(
+			processSupplierOrder(db, supplier.id, {
+				fetcher: async (...args) => {
+					reads++;
+					return fetcher(...args);
+				},
+			}),
+		).rejects.toMatchObject({ code: "supplier_order_pending" });
+		expect(reads).toBe(0);
+		expect(posts).toBe(1);
+		expect(
+			await db
+				.prepare(
+					"SELECT state, selected_account_id FROM supplier_orders WHERE id = ?",
+				)
+				.bind(supplier.id)
+				.first(),
+		).toMatchObject({
+			state: "uncertain",
+			selected_account_id: accountId,
+		});
+	});
+
 	const adminAudit = () => ({
 		request: new Request("https://shop.example/admin/suppliers/orders"),
 		actorUserId: accountId,

@@ -153,3 +153,17 @@ Checks cover numeric/UUID identifier styles, malformed receipts, optional echoed
 Identity validation: 753 unit/security, 293 integration and 23 Bun runtime tests passed (1,069 total); two existing TODO tests remain unexecuted and the manual provider smoke file is skipped. Typecheck, Biome and Workers/Bun builds passed.
 
 身份校验验证：753 项单元及安全测试、293 项集成测试、23 项 Bun 运行时测试通过，共 1,069 项；原有两项 TODO 未执行，真实供应商手工测试文件跳过。类型检查、Biome 及 Workers/Bun 构建通过。
+
+## Purchase receipt persistence / 采购回执持久化
+
+Once submitOrder starts, an unexpected adapter, fulfillment or receipt-persistence error cannot authorize account reselection. Only a definitive rejection whose release was persisted can continue to another candidate. The worker retains the selected account, credential revision and request reference, records any already received upstream order ID, and reports a fixed uncertainty error. The fallback update cannot overwrite supplied/refunded state or another selected account, and preserves an existing upstream ID.
+
+submitOrder 开始后，适配器、交付或回执持久化的意外错误不能作为重新选购的依据。仅在明确拒单且已保存账号释放结果后，才可继续选择另一个账号。任务保留已选账号、凭据版本和请求引用，尽可能保存已收到的上游订单号，并返回固定的结果不确定错误。补偿更新不能覆盖已供应、已退款状态或另一个已选账号，也不会替换已有上游订单号。
+
+D1 fault-injection checks cover a rejected first receipt write followed by authenticated GET recovery and private delivery with exactly one POST. When both the receipt write and fallback write fail, the original submitting claim remains; after storage recovers, the missing-ID path performs neither GET nor a second POST. Truly lost order IDs still require operator investigation; arbitrary manual order-ID attachment is not implemented. No migration or live purchase is required. Browser checks remain pending.
+
+D1 故障注入检查覆盖首次回执写入失败后，通过认证 GET 恢复并私密交付，整个过程仅一次 POST。回执和补偿写入均失败时，原提交占用保持；存储恢复后，缺失订单号的路径既不执行 GET，也不再次 POST。真正丢失订单号仍需运营核查，尚未实现任意手动绑定订单号。本轮无需迁移或真实采购，浏览器检查仍待完成。
+
+Receipt-persistence validation: 753 unit/security, 295 integration and 23 Bun runtime tests passed (1,071 total). Two existing TODO tests remain unexecuted and the manual provider smoke file is skipped. Typecheck, Biome and both Workers/Bun builds passed, retaining existing unrelated Biome notices.
+
+回执持久化验证：753 项单元及安全测试、295 项集成测试、23 项 Bun 运行时测试通过，共 1,071 项。原有两项 TODO 未执行，真实供应商手工测试文件跳过。类型检查、Biome 和 Workers/Bun 构建通过，保留已有无关 Biome 提示。

@@ -212,6 +212,8 @@ async function processSupplierOrderUnlocked(
 		service ? order.currency : null,
 	);
 	for (const candidate of candidates) {
+		let submissionStarted = false;
+		let receivedOrderId: string | null = null;
 		try {
 			return await runTrackedTask(
 				db,
@@ -296,6 +298,9 @@ async function processSupplierOrderUnlocked(
 						)
 						.bind(connection.balance.amountMinor, now, now, now, candidate.id)
 						.run();
+					// After this boundary, only a persisted definitive rejection may release
+					// the account. A local persistence failure says nothing about the purchase.
+					submissionStarted = true;
 					const result = await adapter.submitOrder({
 						skuId: snapshot.upstreamSkuId,
 						quantity: order.quantity,
@@ -309,6 +314,8 @@ async function processSupplierOrderUnlocked(
 						traceId: order.id,
 						service,
 					});
+					receivedOrderId =
+						"upstreamOrderId" in result ? result.upstreamOrderId : null;
 					return applyPurchaseResult(
 						db,
 						{
@@ -324,13 +331,27 @@ async function processSupplierOrderUnlocked(
 				},
 			);
 		} catch (error) {
-			if (error instanceof OperationTaskAlreadyRunningError) continue;
+			if (
+				!submissionStarted &&
+				error instanceof OperationTaskAlreadyRunningError
+			)
+				continue;
 			const current = await loadOrder(db, order.id);
 			if (current?.selected_account_id === candidate.id) {
+				if (!["submitting", "uncertain"].includes(current.state)) throw error;
 				if (current.state === "uncertain") throw error;
-				if (isUncertainError(error)) {
-					await markUncertain(db, current, "supplier_request_uncertain");
-					throw error;
+				if (submissionStarted || isUncertainError(error)) {
+					await markUncertain(
+						db,
+						current,
+						"supplier_request_uncertain",
+						receivedOrderId,
+					);
+					throw new DomainError(
+						"supplier_request_uncertain",
+						503,
+						"Supplier request outcome requires reconciliation",
+					);
 				}
 				await releaseDefinitiveFailure(
 					db,
@@ -697,16 +718,27 @@ async function markUncertain(
 	db: D1Database,
 	order: SupplierOrderContext,
 	code: string,
+	upstreamOrderId: string | null = null,
 ) {
 	const now = Date.now();
 	await db
 		.prepare(
 			`UPDATE supplier_orders SET state = 'uncertain',
+			 upstream_order_id = COALESCE(upstream_order_id, ?),
 			 account_locked_at = COALESCE(account_locked_at, ?),
 			 next_retry_at = ?, last_error_code = ?, updated_at = ?
-			 WHERE id = ? AND selected_account_id IS NOT NULL`,
+			 WHERE id = ? AND selected_account_id = ?
+			 AND state IN ('submitting', 'uncertain')`,
 		)
-		.bind(now, now + 15_000, code, now, order.id)
+		.bind(
+			upstreamOrderId,
+			now,
+			now + 15_000,
+			code,
+			now,
+			order.id,
+			order.selected_account_id,
+		)
 		.run();
 }
 
