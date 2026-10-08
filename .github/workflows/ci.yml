@@ -17,6 +17,7 @@ jobs:
   quality:
     name: Quality gate
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -50,11 +51,17 @@ jobs:
       - name: Check formatting and lint
         run: bun run check
 
-      - name: Verify Dhru service boundary and migration baseline
-        run: bunx vitest run tests/unit/dhru-client.test.ts tests/unit/dhru-provider.test.ts tests/unit/dhru-service.test.ts tests/unit/dhru-migration.test.ts tests/unit/service-delivery-migration.test.ts tests/integration/install.test.ts
+      - name: Run unit and security tests
+        timeout-minutes: 10
+        run: bun run test:unit
 
-      - name: Run full test suite
-        run: bun run test
+      - name: Run isolated D1 integration tests
+        timeout-minutes: 30
+        run: bun run test:integration
+
+      - name: Run Bun runtime tests
+        timeout-minutes: 10
+        run: bun run test:bun-runtime
 
       - name: Build Workers
         run: bun run build

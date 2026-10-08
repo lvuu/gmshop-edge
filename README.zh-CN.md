@@ -336,6 +336,16 @@ bun run build
 bun run build:bun
 ```
 
+`bun run test` 按顺序执行单元/安全、D1 集成和 Bun 运行时三个阶段。
+可用 `bun run test:unit`、`bun run test:integration`、`bun run test:bun-runtime`
+分别运行；`bun run test:vitest` 保留合并运行 Vitest 的入口。详细日志逐用例显示进度。
+D1 测试保持串行，避免多个运行器同时启动 Miniflare 导致初始化失败。
+每个集成用例仍使用独立数据库；助手将每个迁移文件作为一次有序 D1 批处理事务，
+仅在测试工作进程内缓存 SQL 文本。不要对整套测试设置 60/90 秒的总时限。
+CI 的单元/安全、集成、Bun 运行时阶段分别允许 10、30、10 分钟，整个任务允许 45 分钟；
+单个用例与钩子的超时仍会检测真正卡住的测试。Worker 部署预检会等待所有已启动的
+资源检查结束后才返回失败，防止子命令在构建结束后继续运行；预检失败不会执行数据库迁移或 Vite。
+
 确定性自动化测试用于证明应用行为。真实支付、邮件、Telegram 和自动化 Provider smoke
 套件保持手动且无条件跳过；生产验收必须使用部署者自己的基础设施。
 

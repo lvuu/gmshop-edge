@@ -240,7 +240,7 @@ async function buildForWorkers(): Promise<void> {
 		]),
 	];
 
-	const [databaseId, cacheId] = await Promise.all([
+	const resources = await Promise.allSettled([
 		ensureD1Database(databaseName),
 		ensureKvNamespace(cacheName),
 		...bucketNames.map((name) =>
@@ -253,6 +253,22 @@ async function buildForWorkers(): Promise<void> {
 			ensureNamedResource(["queues", "info", name], ["queues", "create", name]),
 		),
 	]);
+	// A failed preflight must not leave sibling Wrangler processes running.
+	// They can still write resource state after the build has reported failure.
+	const failure = resources.find((result) => result.status === "rejected");
+	if (failure?.status === "rejected") throw failure.reason;
+	const [databaseResult, cacheResult] = resources;
+	if (
+		databaseResult?.status !== "fulfilled" ||
+		cacheResult?.status !== "fulfilled" ||
+		typeof databaseResult.value !== "string" ||
+		typeof cacheResult.value !== "string"
+	)
+		throw new Error(
+			"Storage resource checks did not return valid identifiers.",
+		);
+	const databaseId = databaseResult.value,
+		cacheId = cacheResult.value;
 	await run("wrangler", [
 		"d1",
 		"migrations",

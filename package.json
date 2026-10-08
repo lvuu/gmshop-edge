@@ -61,8 +61,8 @@
     "commitlint": "commitlint",
     "hooks:install": "lefthook install",
     "release": "semantic-release",
-    "test": "bun run test:vitest && bun run test:bun-runtime",
-    "test:vitest": "vitest run --exclude tests/unit/server/node-data-operations.test.ts --exclude tests/unit/server/node-runtime-adapters.test.ts --exclude tests/unit/server/node-server-runtime.test.ts",
+    "test": "bun run test:unit && bun run test:integration && bun run test:bun-runtime",
+    "test:vitest": "vitest run",
     "test:bun-runtime": "bun test tests/unit/server/node-data-operations.test.ts tests/unit/server/node-runtime-adapters.test.ts tests/unit/server/node-server-runtime.test.ts",
     "format": "biome format",
     "lint": "biome lint",
@@ -76,7 +76,9 @@
     "db:pull": "drizzle-kit pull",
     "db:studio": "drizzle-kit studio",
     "data": "bun scripts/data.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest run tests/unit tests/security",
+    "test:integration": "vitest run tests/integration"
   },
   "dependencies": {
     "@better-auth/core": "^1.7.6",

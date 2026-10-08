@@ -60,6 +60,10 @@ import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 const tool = basename(process.argv[1] ?? "");
 const args = process.argv.slice(2);
+if (process.env.SLOW_KV === "1" && tool === "wrangler" && args[0] === "kv") {
+ await new Promise((resolve) => setTimeout(resolve, 250));
+ writeFileSync(join(process.cwd(), "slow-kv-completed"), "");
+}
 appendFileSync(process.env.COMMAND_LOG, JSON.stringify({ tool, args }) + "\\n");
 const databaseMarker = join(process.cwd(), ".database-exists");
 const bucketMarker = join(process.cwd(), ".bucket-exists");
@@ -269,6 +273,28 @@ if (tool === "vite" && process.env.WORKERS_CI === "1") {
 				WORKERS_CI: "1",
 			}),
 		).not.toBe(0);
+	});
+
+	it("waits for sibling resource checks when one preflight fails", async () => {
+		expect(
+			await runFixture(fixtureDirectory, {
+				INVALID_D1: "1",
+				SLOW_KV: "1",
+				WORKERS_CI: "1",
+			}),
+		).not.toBe(0);
+		// The delayed child must finish before runFixture returns, so teardown is safe.
+		expect(
+			await readFile(join(fixtureDirectory, "slow-kv-completed"), "utf8"),
+		).toBe("");
+		const commands = await readCommands(fixtureDirectory);
+		expect(
+			commands.some(({ args }) => args.join(" ") === "kv namespace list"),
+		).toBe(true);
+		expect(commands.some(({ args }) => args.includes("migrations"))).toBe(
+			false,
+		);
+		expect(commands.some(({ tool }) => tool === "vite")).toBe(false);
 	});
 
 	it("rejects a generated config without the required bindings", async () => {

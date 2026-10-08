@@ -383,6 +383,21 @@ bun run build
 bun run build:bun
 ```
 
+`bun run test` runs unit/security, D1 integration, and Bun runtime tests in
+three sequential stages. Run `bun run test:unit`, `bun run test:integration`,
+or `bun run test:bun-runtime` for one stage; `bun run test:vitest` retains the
+combined Vitest entry point. Verbose output reports individual test progress.
+Keep D1 suites serial: launching multiple runners against Miniflare concurrently
+can cause runtime initialization failures. Each integration test keeps its own
+database; the helper applies each migration as one ordered D1 batch transaction,
+with SQL text cached per test worker. Do not impose a 60/90-second wall-clock
+limit on the whole suite. CI allows 10 minutes for unit/security, 30 minutes for
+integration, 10 minutes for Bun runtime, and 45 minutes for the complete job;
+individual test/hook timeouts still detect hung cases. Worker deployment preflight
+waits for all started resource probes to settle before returning a failure,
+so no sibling command can outlive the reported build result. Failed preflight
+never proceeds to database migrations or Vite.
+
 Deterministic automated tests cover application behavior. Real payment, email,
 Telegram, and automation-provider smoke suites remain manual and
 unconditionally skipped; production acceptance must use deployer-owned
