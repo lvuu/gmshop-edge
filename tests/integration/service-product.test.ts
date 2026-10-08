@@ -7,7 +7,10 @@ import { createMultiStoreOrder } from "#/features/storefront/server/multi-order"
 import { createSupplierCredentialVault } from "#/features/suppliers/secrets";
 import { handleDhruSupplierCallback } from "#/features/suppliers/server/dhru-callback";
 import { processSupplierOrder } from "#/features/suppliers/server/process";
-import { bindServiceSupplier } from "#/features/suppliers/server/service-binding";
+import {
+	bindServiceSupplier,
+	previewServiceSupplier,
+} from "#/features/suppliers/server/service-binding";
 import {
 	createInitialRuntimeConfig,
 	runtimeConfigEntries,
@@ -299,6 +302,97 @@ describe("service products", { timeout: 30_000 }, () => {
 		).rejects.toMatchObject({ code: "supplier_order_terminal" });
 		expect(posts).toBe(0);
 	});
+	it("previews a single service without database writes or paid requests", async () => {
+		const state = () =>
+			db
+				.prepare(`SELECT p.revision, p.status, item.cost_minor, account.balance_minor, account.health_status,
+   (SELECT COUNT(*) FROM supplier_bindings) AS bindings, (SELECT COUNT(*) FROM product_definition_versions) AS definitions,
+   (SELECT COUNT(*) FROM audit_logs) AS audits
+   FROM products p JOIN product_sellable_items item ON item.product_id = p.id JOIN supplier_accounts account ON account.id = ? WHERE item.id = ?`)
+				.bind(accountId, itemId)
+				.first();
+		const before = await state();
+		const args = {
+			sellableItemId: itemId,
+			accountId,
+			expectedRevision: 1,
+			productId: "123",
+			maxCostMinor: "150",
+		};
+		const preview = await previewServiceSupplier(db, args, { fetcher });
+		expect(preview).toMatchObject({
+			name: "Test service",
+			costMinor: "100",
+			currency: "USD",
+			currencyDecimals: 2,
+			fields: [],
+		});
+		expect(preview.fingerprint).toMatch(/^[a-f0-9]{64}$/);
+		expect(await state()).toEqual(before);
+		expect(JSON.stringify(preview)).not.toContain("test-token");
+		expect(posts).toBe(0);
+		await expect(
+			bindServiceSupplier(
+				db,
+				{ ...args, expectedServiceFingerprint: preview.fingerprint },
+				{ actorUserId: accountId, fetcher },
+			),
+		).resolves.toMatchObject({ revision: 2 });
+	});
+	it.each(["price", "fields", "name"])(
+		"rejects changed upstream %s after preview without any binding writes",
+		async (changed) => {
+			const args = {
+				sellableItemId: itemId,
+				accountId,
+				expectedRevision: 1,
+				productId: "123",
+				maxCostMinor: "150",
+			};
+			const preview = await previewServiceSupplier(db, args, { fetcher });
+			const drift: typeof fetch = async (input, init) => {
+				const response = await fetcher(input, init);
+				if (new URL(String(input)).pathname.endsWith("/products")) {
+					const body = (await response.json()) as {
+						data: Record<string, unknown>;
+					};
+					body.data[changed] =
+						changed === "price"
+							? "1.01"
+							: changed === "name"
+								? "Changed service"
+								: [{ name: "IMEI", type: "imei", required: true }];
+					return Response.json(body);
+				}
+				return response;
+			};
+			await expect(
+				bindServiceSupplier(
+					db,
+					{ ...args, expectedServiceFingerprint: preview.fingerprint },
+					{ actorUserId: accountId, fetcher: drift },
+				),
+			).rejects.toMatchObject({ code: "supplier_service_preview_changed" });
+			expect(
+				await db
+					.prepare("SELECT revision FROM products WHERE id = ?")
+					.bind(productId)
+					.first("revision"),
+			).toBe(1);
+			expect(
+				await db
+					.prepare("SELECT COUNT(*) AS n FROM supplier_bindings")
+					.first("n"),
+			).toBe(1);
+			expect(
+				await db
+					.prepare("SELECT COUNT(*) AS n FROM product_definition_versions")
+					.first("n"),
+			).toBe(0);
+			expect(posts).toBe(0);
+		},
+	);
+
 	it("binds only one service with live quote and an explicit spend cap", async () => {
 		await expect(
 			bindServiceSupplier(

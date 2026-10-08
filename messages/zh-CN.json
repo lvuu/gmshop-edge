@@ -1660,7 +1660,12 @@
 	"supplier_service_product_id": "Dhru 商品 ID 或 UUID",
 	"supplier_service_bind_import": "绑定并导入字段",
 	"supplier_service_binding_saved": "服务已绑定，字段已导入。请检查后发布。",
-	"supplier_service_binding_error": "绑定失败。请检查权限、账户币种、商品字段和成本上限。重新绑定前请完成或取消待付款订单；商品已变更时请重新加载。",
+	"supplier_service_binding_error": "绑定失败。请检查权限、账户币种、商品字段和成本上限。重新绑定前请完成或取消待付款订单；商品已变更时请重新加载。 重试绑定前请重新读取预览。",
 	"supplier_service_binding_save_first": "请先保存商品修改，再绑定服务。",
-	"supplier_service_imported_fields": "已导入客户字段：{fields}"
+	"supplier_service_imported_fields": "已导入客户字段：{fields}",
+	"supplier_service_preview_action": "读取服务预览",
+	"supplier_service_preview_review": "绑定前请检查服务名称、单位成本和必填字段。上游发生变化时需要重新预览。",
+	"supplier_service_field_optional": "选填",
+	"supplier_service_field_imei": "15 位 IMEI",
+	"supplier_service_fields_none": "此服务无需客户填写字段。"
 }

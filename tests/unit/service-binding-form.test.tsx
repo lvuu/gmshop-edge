@@ -7,11 +7,13 @@ import { ServiceBindingForm } from "#/features/suppliers/components/service-bind
 import {
 	bindServiceSupplierFn,
 	listServiceBindingAccountsFn,
+	previewServiceSupplierFn,
 } from "#/features/suppliers/server/service-binding";
 
 vi.mock("#/features/suppliers/server/service-binding", () => ({
 	bindServiceSupplierFn: vi.fn(),
 	listServiceBindingAccountsFn: vi.fn(),
+	previewServiceSupplierFn: vi.fn(),
 }));
 vi.mock("#/components/pro/base/fields/select", () => ({
 	Select: ({
@@ -120,6 +122,43 @@ it("filters accounts by exact currency and submits decimal cost without floats",
 		set.call(inputs[1], "1.25");
 		inputs[1]?.dispatchEvent(new Event("input", { bubbles: true }));
 	});
+
+	vi.mocked(previewServiceSupplierFn).mockResolvedValue({
+		name: "Preview service",
+		costMinor: "100",
+		currency: "USD",
+		currencyDecimals: 2,
+		fingerprint: "a".repeat(64),
+		fields: [
+			{
+				key: "IMEI",
+				required: true,
+				sensitive: true,
+				validationPattern: "^[0-9]{15}$",
+			},
+		],
+	});
+	const bindButton = () => [...container.querySelectorAll("button")].at(-1);
+	expect(bindButton()?.disabled).toBe(true);
+	const previewButton = [...container.querySelectorAll("button")].find(
+		(button) => button.textContent?.includes("Read service preview"),
+	);
+	if (!previewButton) throw new Error("missing preview button");
+	await act(async () => previewButton.click());
+	expect(bindServiceSupplierFn).not.toHaveBeenCalled();
+	expect(container.textContent).toContain("Preview service");
+	expect(bindButton()?.disabled).toBe(false);
+	// Changing a reviewed request must invalidate the preview.
+	await act(async () => {
+		set.call(inputs[0], "456");
+		inputs[0]?.dispatchEvent(new Event("input", { bubbles: true }));
+	});
+	expect(bindButton()?.disabled).toBe(true);
+	expect(container.textContent).not.toContain("Preview service");
+	await act(async () => {
+		set.call(inputs[0], "123");
+		inputs[0]?.dispatchEvent(new Event("input", { bubbles: true }));
+	});
 	vi.mocked(bindServiceSupplierFn).mockResolvedValue({
 		id: crypto.randomUUID(),
 		productId: "product",
@@ -136,9 +175,10 @@ it("filters accounts by exact currency and submits decimal cost without floats",
 			expectedRevision: 7,
 			productId: "123",
 			maxCostMinor: "125",
+			expectedServiceFingerprint: "a".repeat(64),
 		},
 	});
 	expect(onBound).toHaveBeenCalledOnce();
-	expect(onBusy.mock.calls).toEqual([[true], [false]]);
+	expect(onBusy.mock.calls).toEqual([[true], [false], [true], [false]]);
 	expect(container.textContent).toContain("IMEI");
 });

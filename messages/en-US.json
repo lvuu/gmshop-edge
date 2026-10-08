@@ -1660,7 +1660,12 @@
 	"supplier_service_product_id": "Dhru product ID or UUID",
 	"supplier_service_bind_import": "Bind and import fields",
 	"supplier_service_binding_saved": "Service bound and fields imported. Review before publishing.",
-	"supplier_service_binding_error": "Binding failed. Check permissions, account currency, product fields and cost limit. Finish or cancel pending payments before rebinding; reload if the product changed.",
+	"supplier_service_binding_error": "Binding failed. Check permissions, account currency, product fields and cost limit. Finish or cancel pending payments before rebinding; reload if the product changed. Read the preview again before retrying a bind.",
 	"supplier_service_binding_save_first": "Save product changes before binding a service.",
-	"supplier_service_imported_fields": "Imported customer fields: {fields}"
+	"supplier_service_imported_fields": "Imported customer fields: {fields}",
+	"supplier_service_preview_action": "Read service preview",
+	"supplier_service_preview_review": "Review the service, unit cost and required fields before binding. Upstream changes require a new preview.",
+	"supplier_service_field_optional": "Optional",
+	"supplier_service_field_imei": "15-digit IMEI",
+	"supplier_service_fields_none": "This service requires no customer fields."
 }
