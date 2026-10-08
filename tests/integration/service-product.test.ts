@@ -348,6 +348,148 @@ describe("service products", { timeout: 30_000 }, () => {
 			),
 		).rejects.toMatchObject({ code: "product_revision_conflict" });
 	});
+	it("imports required fields atomically and keeps previous order definitions immutable", async () => {
+		const importFetcher: typeof fetch = async (input, init) => {
+			const response = await fetcher(input, init);
+			if (new URL(String(input)).pathname.endsWith("/products")) {
+				const body = (await response.json()) as {
+					data: Record<string, unknown>;
+				};
+				body.data.fields = [{ name: "IMEI", type: "imei", required: true }];
+				return Response.json(body);
+			}
+			return response;
+		};
+		const args = {
+			sellableItemId: itemId,
+			accountId,
+			expectedRevision: 1,
+			productId: "123",
+			maxCostMinor: "150",
+		};
+		await bindServiceSupplier(db, args, {
+			actorUserId: accountId,
+			fetcher: importFetcher,
+		});
+		expect(
+			await db
+				.prepare("SELECT status FROM products WHERE id = ?")
+				.bind(productId)
+				.first("status"),
+		).toBe("draft");
+		await db.prepare("UPDATE products SET status = 'active'").run();
+		await expect(checkout()).rejects.toThrow();
+		const order = await createMultiStoreOrder(db, {
+			email: "buyer@example.com",
+			idempotencyKey: crypto.randomUUID(),
+			items: [
+				{
+					sellableItemId: itemId,
+					quantity: 1,
+					inputValues: { IMEI: "012345678901234" },
+				},
+			],
+		});
+		const snapshot = await db
+			.prepare(
+				"SELECT definition_version_id, input_values_json, sensitive_input_values_json FROM shop_order_items WHERE order_id = ?",
+			)
+			.bind(order.id)
+			.first();
+		expect(JSON.stringify(snapshot)).not.toContain("012345678901234");
+		await expect(
+			bindServiceSupplier(
+				db,
+				{ ...args, expectedRevision: 2 },
+				{ actorUserId: accountId, fetcher },
+			),
+		).rejects.toMatchObject({ code: "supplier_service_unpaid_orders" });
+		await pay(order.id);
+
+		await bindServiceSupplier(
+			db,
+			{ ...args, expectedRevision: 2 },
+			{ actorUserId: accountId, fetcher },
+		);
+		expect(
+			await db
+				.prepare("SELECT COUNT(*) AS n FROM product_definition_versions")
+				.first("n"),
+		).toBe(2);
+		expect(
+			await db
+				.prepare(
+					"SELECT definition_version_id FROM shop_order_items WHERE order_id = ?",
+				)
+				.bind(order.id)
+				.first("definition_version_id"),
+		).toBe(snapshot?.definition_version_id);
+		const old = await db
+			.prepare(
+				"SELECT schema_json FROM product_definition_versions WHERE id = ?",
+			)
+			.bind(snapshot?.definition_version_id)
+			.first<string>("schema_json");
+		expect(JSON.parse(old ?? "[]")[0]).toMatchObject({
+			key: "IMEI",
+			required: true,
+			sensitive: true,
+		});
+		const job = await db
+			.prepare("SELECT id FROM supplier_orders WHERE order_id = ?")
+			.bind(order.id)
+			.first<string>("id");
+		await expect(
+			processSupplierOrder(db, job ?? "", { fetcher }),
+		).rejects.toMatchObject({ code: "supplier_order_pending" });
+		expect(postedFields.IMEI).toBe("012345678901234");
+	});
+	it("unsupported upstream fields leave product revision, bindings and definitions untouched", async () => {
+		const invalid: typeof fetch = async (input, init) => {
+			const response = await fetcher(input, init);
+			if (new URL(String(input)).pathname.endsWith("/products")) {
+				const body = (await response.json()) as {
+					data: Record<string, unknown>;
+				};
+				body.data.fields = [{ name: "Upload", type: "file", required: true }];
+				return Response.json(body);
+			}
+			return response;
+		};
+		await expect(
+			bindServiceSupplier(
+				db,
+				{
+					sellableItemId: itemId,
+					accountId,
+					expectedRevision: 1,
+					productId: "123",
+					maxCostMinor: "150",
+				},
+				{ actorUserId: accountId, fetcher: invalid },
+			),
+		).rejects.toMatchObject({ code: "supplier_service_fields_unsupported" });
+		expect(
+			await db
+				.prepare("SELECT revision FROM products WHERE id = ?")
+				.bind(productId)
+				.first("revision"),
+		).toBe(1);
+		expect(
+			await db
+				.prepare("SELECT COUNT(*) AS n FROM product_definition_versions")
+				.first("n"),
+		).toBe(0);
+		expect(
+			await db
+				.prepare(
+					"SELECT COUNT(*) AS n FROM supplier_bindings WHERE enabled = 1",
+				)
+				.first("n"),
+		).toBe(1);
+		expect(posts).toBe(0);
+	});
+
 	it("unsigned feedback cannot deliver results or replace the upstream ID", async () => {
 		const order = await checkout();
 		await pay(order.id);

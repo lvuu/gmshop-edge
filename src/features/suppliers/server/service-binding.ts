@@ -34,6 +34,26 @@ export const bindServiceSupplierFn = createServerFn({ method: "POST" })
 		});
 	});
 
+export const listServiceBindingAccountsFn = createServerFn({
+	method: "GET",
+}).handler(async () => {
+	const [context] = await Promise.all([
+		getAdminRuntimeServerContext(systemPermission("suppliers", "update")),
+		getAdminRuntimeServerContext(systemPermission("products", "update")),
+	]);
+	const rows = await context.db
+		.prepare(
+			"SELECT id, name, currency, currency_decimals FROM supplier_accounts WHERE provider = 'dhru' AND enabled = 1 ORDER BY name, id",
+		)
+		.all<{
+			id: string;
+			name: string;
+			currency: string;
+			currency_decimals: number;
+		}>();
+	return rows.results;
+});
+
 /** One explicit service binding; never imports the supplier catalog or submits an order. */
 export async function bindServiceSupplier(
 	db: D1Database,
@@ -60,6 +80,19 @@ export async function bindServiceSupplier(
 		);
 	if (target.revision !== data.expectedRevision)
 		throw new DomainError("product_revision_conflict", 409, "Product changed");
+
+	const unpaid = await db
+		.prepare(
+			"SELECT 1 FROM shop_order_items item JOIN shop_orders orders ON orders.id = item.order_id WHERE item.sellable_item_id = ? AND orders.status = 'pending_payment' LIMIT 1",
+		)
+		.bind(data.sellableItemId)
+		.first();
+	if (unpaid)
+		throw new DomainError(
+			"supplier_service_unpaid_orders",
+			409,
+			"Finish or cancel pending payments before rebinding",
+		);
 	const account = await db
 		.prepare(
 			"SELECT * FROM supplier_accounts WHERE id = ? AND enabled = 1 AND provider = 'dhru'",
@@ -90,7 +123,7 @@ export async function bindServiceSupplier(
 	const adapter = await adapterForSupplierAccount(account, runtime, {
 		fetcher: options.fetcher,
 	});
-	if (!adapter.getServiceQuote)
+	if (!adapter.getServiceDefinition)
 		throw new DomainError(
 			"supplier_service_not_ready",
 			409,
@@ -98,7 +131,7 @@ export async function bindServiceSupplier(
 		);
 	const [connection, quote] = await Promise.all([
 		adapter.testConnection(),
-		adapter.getServiceQuote(data.productId),
+		adapter.getServiceDefinition(data.productId),
 	]);
 	if (BigInt(quote.costMinor) > BigInt(data.maxCostMinor))
 		throw new DomainError(
@@ -114,9 +147,15 @@ export async function bindServiceSupplier(
 	const results = await db.batch([
 		db
 			.prepare(
-				"UPDATE products SET status = 'draft', revision = revision + 1, revision_token = ?, updated_at = ? WHERE id = ? AND revision = ?",
+				"UPDATE products SET status = 'draft', revision = revision + 1, revision_token = ?, updated_at = ? WHERE id = ? AND revision = ? AND NOT EXISTS (SELECT 1 FROM shop_order_items item JOIN shop_orders orders ON orders.id = item.order_id WHERE item.sellable_item_id = ? AND orders.status = 'pending_payment')",
 			)
-			.bind(token, now, target.product_id, data.expectedRevision),
+			.bind(
+				token,
+				now,
+				target.product_id,
+				data.expectedRevision,
+				data.sellableItemId,
+			),
 		db
 			.prepare(
 				`UPDATE supplier_bindings SET enabled = 0, updated_at = ? WHERE sellable_item_id = ? AND enabled = 1 AND ${guard}`,
@@ -156,6 +195,24 @@ export async function bindServiceSupplier(
 				token,
 			),
 		db
+			.prepare(`INSERT INTO product_definition_versions
+   (id, product_id, sellable_item_id, version, schema_json, published_at, created_by, created_at, updated_at)
+   SELECT ?, ?, ?, COALESCE((SELECT MAX(version) FROM product_definition_versions WHERE sellable_item_id = ?), 0) + 1, ?, ?, ?, ?, ? WHERE ${guard}`)
+			.bind(
+				crypto.randomUUID(),
+				target.product_id,
+				data.sellableItemId,
+				data.sellableItemId,
+				JSON.stringify(quote.definitions),
+				now,
+				options.actorUserId,
+				now,
+				now,
+				target.product_id,
+				token,
+			),
+
+		db
 			.prepare(
 				`UPDATE supplier_accounts SET balance_minor = ?, balance_synced_at = ?, health_status = 'healthy', updated_at = ? WHERE id = ? AND ${guard}`,
 			)
@@ -186,5 +243,6 @@ export async function bindServiceSupplier(
 		id,
 		productId: target.product_id,
 		revision: data.expectedRevision + 1,
+		fields: quote.definitions.map(({ key, required }) => ({ key, required })),
 	};
 }

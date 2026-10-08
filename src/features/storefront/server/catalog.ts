@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import type { z } from "zod";
-import { buildDefinitionListSchema } from "#/features/builds/schema";
+import { publishedProductInputDefinitionsSchema } from "#/features/catalog/input-values";
 import {
 	productIdSchema,
 	storefrontListSchema,
@@ -126,10 +126,13 @@ export const getStorefrontProductFn = createServerFn({ method: "GET" })
 					 version.version AS definition_version, version.schema_json
 					 FROM product_sellable_items item
 					 JOIN product_definition_versions version
-					  ON version.id = item.active_definition_version_id
+					  ON version.id = CASE WHEN item.automation_provider IS NOT NULL
+                      THEN item.active_definition_version_id ELSE (
+                       SELECT latest.id FROM product_definition_versions latest
+                       WHERE latest.sellable_item_id = item.id ORDER BY latest.version DESC LIMIT 1
+                      ) END
 					 WHERE item.product_id = ? AND item.enabled = 1
-					  AND item.automation_provider IS NOT NULL
-					 ORDER BY item.sort_order, item.id`,
+					  ORDER BY item.sort_order, item.id`,
 				)
 				.bind(product.id),
 			db
@@ -219,7 +222,9 @@ function presentInputs(versionRows: Row[]) {
 
 function parseDefinitions(value: string) {
 	try {
-		const parsed = buildDefinitionListSchema.safeParse(JSON.parse(value));
+		const parsed = publishedProductInputDefinitionsSchema.safeParse(
+			JSON.parse(value),
+		);
 		if (parsed.success) return parsed.data;
 	} catch {
 		// Corrupt persisted definitions fail closed.

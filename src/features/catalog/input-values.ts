@@ -37,6 +37,10 @@ const persistedDefinitionSchema = z.object({
 	options: z.array(z.object({ value: z.string(), label: z.string() })),
 });
 
+export const publishedProductInputDefinitionsSchema = z.array(
+	persistedDefinitionSchema,
+);
+
 export function parseProductInputDefinitions(
 	versionId: string,
 	value: string,
@@ -47,7 +51,7 @@ export function parseProductInputDefinitions(
 	} catch {
 		raw = null;
 	}
-	const parsed = z.array(persistedDefinitionSchema).safeParse(raw);
+	const parsed = publishedProductInputDefinitionsSchema.safeParse(raw);
 	if (!parsed.success)
 		throw new DomainError(
 			"input_definition_invalid",

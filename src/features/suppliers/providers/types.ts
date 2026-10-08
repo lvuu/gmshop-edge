@@ -35,6 +35,11 @@ export interface SupplierAdapter {
 		updatedAfter?: string;
 		includeInactive?: boolean;
 	}): Promise<{ products: SupplierProduct[]; total: number }>;
+	getServiceDefinition?(productId: string): Promise<{
+		name: string;
+		costMinor: string;
+		definitions: ReturnType<typeof import("./dhru-fields").importDhruFields>;
+	}>;
 	getServiceQuote?(
 		productId: string,
 	): Promise<{ name: string; costMinor: string }>;

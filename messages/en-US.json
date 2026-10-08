@@ -530,8 +530,8 @@
 	"catalog_usage_limit_tooltip": "Number of automation jobs allowed by each entitlement. Leave blank for unlimited jobs.",
 	"catalog_tags_tooltip": "Typing creates a tag by name. Only surrounding whitespace is removed; names are case-sensitive and cannot repeat on one product.",
 	"catalog_service_fulfillment_description": "Services require a supplier binding. Paid orders enter the supplier queue and deliver a private result.",
-  "catalog_product_type_service": "Service",
-  "catalog_product_type_stock": "Preloaded text inventory",
+	"catalog_product_type_service": "Service",
+	"catalog_product_type_stock": "Preloaded text inventory",
 	"catalog_product_type_download": "Private file download",
 	"catalog_product_type_automation": "Automated fulfillment",
 	"catalog_status_draft": "Draft",
@@ -1653,5 +1653,14 @@
 	"catalog_error_order_history": "Products with order or entitlement history cannot be permanently deleted",
 	"settings_error_keyring_rotate_only": "The data encryption keyring can only be rotated, not replaced",
 	"settings_error_allowed_hosts_required": "Enter at least one allowed host",
-	"settings_error_client_ip_source_invalid": "Client IP source must be one of: auto, cf-connecting-ip, x-forwarded-for, x-real-ip, none"
+	"settings_error_client_ip_source_invalid": "Client IP source must be one of: auto, cf-connecting-ip, x-forwarded-for, x-real-ip, none",
+	"supplier_sellable_item": "Service plan",
+	"supplier_service_binding_title": "Bind one Dhru service",
+	"supplier_service_binding_description": "Fetch one service and import its customer fields. Binding returns the product to draft; review and publish it again. Only IMEI and text fields without additional constraints are supported.",
+	"supplier_service_product_id": "Dhru product ID or UUID",
+	"supplier_service_bind_import": "Bind and import fields",
+	"supplier_service_binding_saved": "Service bound and fields imported. Review before publishing.",
+	"supplier_service_binding_error": "Binding failed. Check permissions, account currency, product fields and cost limit. Finish or cancel pending payments before rebinding; reload if the product changed.",
+	"supplier_service_binding_save_first": "Save product changes before binding a service.",
+	"supplier_service_imported_fields": "Imported customer fields: {fields}"
 }

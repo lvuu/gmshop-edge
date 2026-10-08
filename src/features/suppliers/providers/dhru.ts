@@ -8,6 +8,7 @@ import {
 } from "../schema";
 import { normalizeSupplierSource } from "../server/source-url";
 import { DhruClient, DhruClientError } from "./dhru-client";
+import { importDhruFields } from "./dhru-fields";
 import type { SupplierAdapter } from "./types";
 
 /** Server-only provider. Paid service submission requires an explicit input snapshot. */
@@ -66,6 +67,24 @@ export class DhruAdapter implements SupplierAdapter {
 			costMinor: decimalToMinor(price, this.input.currencyDecimals),
 		};
 	}
+	async getServiceDefinition(productId: string) {
+		const product = z
+			.object({
+				name: z.string(),
+				price: z.string().regex(/^\d+(?:\.\d+)?$/),
+				fields: z.unknown(),
+			})
+			.parse(await this.client.getProduct(productId));
+		const price = product.price.includes(".")
+			? product.price.replace(/0+$/, "").replace(/\.$/, "")
+			: product.price;
+		return {
+			name: product.name,
+			costMinor: decimalToMinor(price, this.input.currencyDecimals),
+			definitions: importDhruFields(product.fields),
+		};
+	}
+
 	async getSku(): ReturnType<SupplierAdapter["getSku"]> {
 		throw serviceNotReady();
 	}

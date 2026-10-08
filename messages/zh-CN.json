@@ -530,8 +530,8 @@
 	"catalog_usage_limit_tooltip": "每份自动化权益允许创建的任务次数；留空表示不限次数",
 	"catalog_tags_tooltip": "输入后按名称创建标签；仅去除前后空格，名称区分大小写，同一商品不能重复",
 	"catalog_service_fulfillment_description": "服务需绑定供应商。付款后自动进入采购队列，完成后交付私有结果。",
-  "catalog_product_type_service": "服务",
-  "catalog_product_type_stock": "预置卡密",
+	"catalog_product_type_service": "服务",
+	"catalog_product_type_stock": "预置卡密",
 	"catalog_product_type_download": "私有文件下载",
 	"catalog_product_type_automation": "自动化交付",
 	"catalog_status_draft": "草稿",
@@ -1653,5 +1653,14 @@
 	"catalog_error_order_history": "存在订单或权益记录的商品不能永久删除",
 	"settings_error_keyring_rotate_only": "数据加密密钥环只能轮换，不能直接替换",
 	"settings_error_allowed_hosts_required": "至少填写一个允许的主机",
-	"settings_error_client_ip_source_invalid": "客户端 IP 来源只能是 auto、cf-connecting-ip、x-forwarded-for、x-real-ip 或 none 之一"
+	"settings_error_client_ip_source_invalid": "客户端 IP 来源只能是 auto、cf-connecting-ip、x-forwarded-for、x-real-ip 或 none 之一",
+	"supplier_sellable_item": "服务套餐",
+	"supplier_service_binding_title": "绑定单个 Dhru 服务",
+	"supplier_service_binding_description": "读取单个服务并导入客户填写字段。绑定后商品回到草稿，请检查后重新发布。当前仅支持无额外约束的 IMEI 和文本字段。",
+	"supplier_service_product_id": "Dhru 商品 ID 或 UUID",
+	"supplier_service_bind_import": "绑定并导入字段",
+	"supplier_service_binding_saved": "服务已绑定，字段已导入。请检查后发布。",
+	"supplier_service_binding_error": "绑定失败。请检查权限、账户币种、商品字段和成本上限。重新绑定前请完成或取消待付款订单；商品已变更时请重新加载。",
+	"supplier_service_binding_save_first": "请先保存商品修改，再绑定服务。",
+	"supplier_service_imported_fields": "已导入客户字段：{fields}"
 }
