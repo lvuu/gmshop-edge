@@ -341,6 +341,7 @@ async function processSupplierOrderUnlocked(
 							selected_credentials_revision: candidate.credentials_revision,
 							provider_request_no: requestNo,
 							state: "submitting",
+							updated_at: now,
 						},
 						result,
 						runtime.commerceSecret,
@@ -597,42 +598,41 @@ async function fulfillServiceSupplierOrder(
 	result: Extract<SupplierPurchaseResult, { status: "supplied" }>,
 	commerceSecret: string,
 ) {
+	if (
+		order.upstream_order_id !== null &&
+		order.upstream_order_id !== result.upstreamOrderId
+	)
+		throw new DomainError(
+			"supplier_service_delivery_conflict",
+			409,
+			"Service result does not match the accepted purchase",
+			{ retryable: false },
+		);
 	const encrypted = await encryptDeliveryContent(
 		JSON.stringify(result.fulfillment),
 		commerceSecret,
 	);
-	const now = Date.now();
+	const now = Math.max(Date.now(), order.updated_at + 1);
+	const outboxId = crypto.randomUUID();
+	// The unique event is also this transaction's claim. Every subsequent write
+	// requires its exact ID, so a losing or duplicate response cannot save content.
 	const results = await db.batch([
-		db
-			.prepare(`UPDATE supplier_orders SET state = 'supplied', upstream_order_id = ?,
-   supplied_at = ?, next_retry_at = NULL, last_error_code = NULL, updated_at = ?
-   WHERE id = ? AND state IN ('submitting', 'uncertain')
-   AND EXISTS (SELECT 1 FROM delivery_records dr JOIN shop_order_items oi ON oi.id = dr.order_item_id
-    JOIN shop_orders o ON o.id = oi.order_id WHERE dr.id = ?
-    AND dr.delivery_type = 'service' AND dr.status = 'awaiting_supply'
-    AND o.status IN ('paid', 'fulfilling'))`)
-			.bind(
-				result.upstreamOrderId,
-				now,
-				now,
-				order.id,
-				order.delivery_record_id,
-			),
-		db
-			.prepare(`UPDATE delivery_records SET status = 'pending', content_encrypted = ?,
-   content_key_version = 1, next_attempt_at = ?, error_code = NULL, updated_at = ?
-   WHERE id = ? AND delivery_type = 'service' AND status = 'awaiting_supply'
-   AND EXISTS (SELECT 1 FROM supplier_orders WHERE id = ? AND state = 'supplied')`)
-			.bind(encrypted, now, now, order.delivery_record_id, order.id),
 		db
 			.prepare(`INSERT INTO outbox_events
    (id, event_type, aggregate_type, aggregate_id, idempotency_key, payload, status, attempt_count, created_at, updated_at)
-   SELECT ?, 'delivery.requested', 'delivery', ?, ?, ?, 'pending', 0, ?, ?
-   FROM delivery_records WHERE id = ? AND delivery_type = 'service' AND status = 'pending'
+   SELECT ?, 'delivery.requested', 'delivery', dr.id, ?, ?, 'pending', 0, ?, ?
+   FROM supplier_orders so JOIN delivery_records dr ON dr.id = so.delivery_record_id
+   JOIN shop_order_items oi ON oi.id = dr.order_item_id JOIN shop_orders o ON o.id = oi.order_id
+   WHERE so.id = ? AND so.state = ? AND so.updated_at = ?
+   AND so.state IN ('submitting', 'uncertain')
+   AND so.selected_account_id IS ? AND so.selected_credentials_revision IS ?
+   AND so.account_locked_at IS ? AND so.provider_request_no IS ? AND so.upstream_order_id IS ?
+   AND dr.id = ? AND dr.order_item_id = so.order_item_id AND o.id = so.order_id
+   AND dr.delivery_type = 'service' AND dr.status = 'awaiting_supply'
+   AND o.status IN ('paid', 'fulfilling')
    ON CONFLICT(idempotency_key) DO NOTHING`)
 			.bind(
-				crypto.randomUUID(),
-				order.delivery_record_id,
+				outboxId,
 				`supplier-delivery-requested:${order.delivery_record_id}`,
 				JSON.stringify({
 					deliveryId: order.delivery_record_id,
@@ -640,12 +640,33 @@ async function fulfillServiceSupplierOrder(
 				}),
 				now,
 				now,
+				order.id,
+				order.state,
+				order.updated_at,
+				order.selected_account_id,
+				order.selected_credentials_revision,
+				order.account_locked_at,
+				order.provider_request_no,
+				order.upstream_order_id,
 				order.delivery_record_id,
 			),
+		db
+			.prepare(`UPDATE supplier_orders SET state = 'supplied', upstream_order_id = ?,
+   supplied_at = ?, next_retry_at = NULL, last_error_code = NULL, updated_at = ?
+   WHERE id = ? AND EXISTS (SELECT 1 FROM outbox_events WHERE id = ?)`)
+			.bind(result.upstreamOrderId, now, now, order.id, outboxId),
+		db
+			.prepare(`UPDATE delivery_records SET status = 'pending', content_encrypted = ?,
+   content_key_version = 1, next_attempt_at = ?, error_code = NULL, updated_at = ?
+   WHERE id = ? AND EXISTS (SELECT 1 FROM outbox_events WHERE id = ?)`)
+			.bind(encrypted, now, now, order.delivery_record_id, outboxId),
 	]);
 	if (Number(results[0]?.meta.changes ?? 0) !== 1) {
 		const current = await loadOrder(db, order.id);
-		if (current?.state !== "supplied")
+		if (
+			current?.state !== "supplied" ||
+			current.upstream_order_id !== result.upstreamOrderId
+		)
 			throw new DomainError(
 				"supplier_service_delivery_conflict",
 				409,

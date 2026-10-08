@@ -1143,6 +1143,296 @@ describe("service products", { timeout: 30_000 }, () => {
 		expect(posts).toBe(3);
 	});
 
+	it("rejects stale successful service reads after purchase identity, version or fulfillment eligibility changes", async () => {
+		await db
+			.prepare(`INSERT INTO supplier_accounts
+		 (id, provider, base_url, normalized_api_origin, protocol_version, currency, currency_decimals,
+		 name, credentials_encrypted, credential_fingerprint)
+		 SELECT ?, provider, base_url, normalized_api_origin, protocol_version, currency, currency_decimals,
+		 'Other', credentials_encrypted, 'other-test' FROM supplier_accounts WHERE id = ?`)
+			.bind(crypto.randomUUID(), accountId)
+			.run();
+		const changes = [
+			[
+				"upstream",
+				"UPDATE supplier_orders SET upstream_order_id = 'NEW' WHERE id = ?",
+			],
+			[
+				"account",
+				"UPDATE supplier_orders SET selected_account_id = (SELECT id FROM supplier_accounts WHERE id <> supplier_orders.selected_account_id LIMIT 1) WHERE id = ?",
+			],
+			[
+				"credentials",
+				"UPDATE supplier_orders SET selected_credentials_revision = 2 WHERE id = ?",
+			],
+			[
+				"lock",
+				"UPDATE supplier_orders SET account_locked_at = account_locked_at + 1 WHERE id = ?",
+			],
+			[
+				"reference",
+				"UPDATE supplier_orders SET provider_request_no = 'NEW' WHERE id = ?",
+			],
+			[
+				"version",
+				"UPDATE supplier_orders SET updated_at = updated_at + 1 WHERE id = ?",
+			],
+			["refund", "UPDATE shop_orders SET status = 'refunded' WHERE id = ?"],
+			["cancel", "UPDATE shop_orders SET status = 'cancelled' WHERE id = ?"],
+			[
+				"delivery",
+				"UPDATE delivery_records SET status = 'failed' WHERE id = ?",
+			],
+		] as const;
+		for (const [change, sql] of changes) {
+			const { order, supplier } = await pollingSupplier();
+			let expectedPurchase: unknown;
+			const racingDb = {
+				prepare: db.prepare.bind(db),
+				batch: async (statements: D1PreparedStatement[]) => {
+					if (statements.length === 3) {
+						await db
+							.prepare(sql)
+							.bind(
+								change === "refund" || change === "cancel"
+									? order.id
+									: change === "delivery"
+										? supplier.delivery_record_id
+										: supplier.id,
+							)
+							.run();
+						expectedPurchase = await db
+							.prepare("SELECT * FROM supplier_orders WHERE id = ?")
+							.bind(supplier.id)
+							.first();
+					}
+					return db.batch(statements);
+				},
+			} as D1Database;
+			await expect(
+				processSupplierOrder(racingDb, supplier.id, { fetcher }),
+				change,
+			).rejects.toMatchObject({ code: "supplier_service_delivery_conflict" });
+			expect(
+				await db
+					.prepare("SELECT * FROM supplier_orders WHERE id = ?")
+					.bind(supplier.id)
+					.first(),
+				change,
+			).toEqual(expectedPurchase);
+			expect(
+				await db
+					.prepare(
+						"SELECT status, content_encrypted FROM delivery_records WHERE id = ?",
+					)
+					.bind(supplier.delivery_record_id)
+					.first(),
+				change,
+			).toMatchObject({
+				status: change === "delivery" ? "failed" : "awaiting_supply",
+				content_encrypted: null,
+			});
+			expect(
+				await db
+					.prepare(
+						"SELECT COUNT(*) AS n FROM outbox_events WHERE aggregate_id = ? AND event_type = 'delivery.requested'",
+					)
+					.bind(supplier.delivery_record_id)
+					.first("n"),
+				change,
+			).toBe(0);
+		}
+		expect(posts).toBe(changes.length);
+	});
+
+	it("preserves a winning service result and leaves incomplete supplied history untouched", async () => {
+		for (const complete of [true, false]) {
+			const { order, supplier } = await pollingSupplier();
+			const racingDb = {
+				prepare: db.prepare.bind(db),
+				batch: async (statements: D1PreparedStatement[]) => {
+					if (statements.length === 3) {
+						if (complete)
+							await completeSupplierOrderFromCallback(db, supplier.id, {
+								status: "supplied",
+								upstreamOrderId: "D1",
+								fulfillment: {
+									type: "service",
+									resultText: "Winning private result",
+								},
+							});
+						else
+							await db
+								.prepare(
+									"UPDATE supplier_orders SET state = 'supplied' WHERE id = ?",
+								)
+								.bind(supplier.id)
+								.run();
+					}
+					return db.batch(statements);
+				},
+			} as D1Database;
+			await expect(
+				processSupplierOrder(racingDb, supplier.id, { fetcher }),
+			).resolves.toMatchObject({ state: "supplied", duplicate: true });
+			expect(
+				await db
+					.prepare(
+						"SELECT COUNT(*) AS n FROM outbox_events WHERE aggregate_id = ? AND event_type = 'delivery.requested'",
+					)
+					.bind(supplier.delivery_record_id)
+					.first("n"),
+			).toBe(complete ? 1 : 0);
+			if (complete) {
+				await processDelivery(db, supplier.delivery_record_id);
+				await expect(
+					revealStoreDelivery(db, {
+						orderNumber: order.orderNumber,
+						email: "buyer@example.com",
+						deliveryId: supplier.delivery_record_id,
+					}),
+				).resolves.toMatchObject({ content: "Winning private result" });
+			} else {
+				expect(
+					await db
+						.prepare(
+							"SELECT status, content_encrypted FROM delivery_records WHERE id = ?",
+						)
+						.bind(supplier.delivery_record_id)
+						.first(),
+				).toMatchObject({ status: "awaiting_supply", content_encrypted: null });
+			}
+		}
+		expect(posts).toBe(2);
+	});
+
+	it("rolls back every service commit stage and recovers by GET without another purchase", async () => {
+		const failures = [
+			"BEFORE INSERT ON outbox_events WHEN NEW.event_type = 'delivery.requested'",
+			"BEFORE UPDATE ON supplier_orders WHEN NEW.state = 'supplied'",
+			"BEFORE UPDATE ON delivery_records WHEN NEW.status = 'pending' AND NEW.delivery_type = 'service'",
+		];
+		for (const failure of failures) {
+			const { order, supplier } = await pollingSupplier();
+			const before = await db
+				.prepare("SELECT * FROM supplier_orders WHERE id = ?")
+				.bind(supplier.id)
+				.first();
+			await db
+				.prepare(`CREATE TRIGGER fail_service_commit ${failure}
+			 BEGIN SELECT RAISE(ABORT, 'service commit unavailable'); END`)
+				.run();
+			await expect(
+				processSupplierOrder(db, supplier.id, { fetcher }),
+			).rejects.toThrow();
+			expect(
+				await db
+					.prepare("SELECT * FROM supplier_orders WHERE id = ?")
+					.bind(supplier.id)
+					.first(),
+			).toEqual(before);
+			expect(
+				await db
+					.prepare(
+						"SELECT status, content_encrypted FROM delivery_records WHERE id = ?",
+					)
+					.bind(supplier.delivery_record_id)
+					.first(),
+			).toMatchObject({ status: "awaiting_supply", content_encrypted: null });
+			expect(
+				await db
+					.prepare(
+						"SELECT COUNT(*) AS n FROM outbox_events WHERE aggregate_id = ? AND event_type = 'delivery.requested'",
+					)
+					.bind(supplier.delivery_record_id)
+					.first("n"),
+			).toBe(0);
+			await db.prepare("DROP TRIGGER fail_service_commit").run();
+			await processSupplierOrder(db, supplier.id, { fetcher });
+			await processDelivery(db, supplier.delivery_record_id);
+			await expect(
+				revealStoreDelivery(db, {
+					orderNumber: order.orderNumber,
+					email: "buyer@example.com",
+					deliveryId: supplier.delivery_record_id,
+				}),
+			).resolves.toMatchObject({ content: "Status: Clean" });
+		}
+		expect(posts).toBe(failures.length);
+	});
+
+	it("refuses a service result for a different accepted order before any delivery write", async () => {
+		const { supplier } = await pollingSupplier();
+		await expect(
+			completeSupplierOrderFromCallback(db, supplier.id, {
+				status: "supplied",
+				upstreamOrderId: "OTHER",
+				fulfillment: {
+					type: "service",
+					resultText: "Unrelated private result",
+				},
+			}),
+		).rejects.toMatchObject({
+			code: "supplier_service_delivery_conflict",
+			retryable: false,
+		});
+		expect(
+			await db
+				.prepare(
+					"SELECT state, upstream_order_id FROM supplier_orders WHERE id = ?",
+				)
+				.bind(supplier.id)
+				.first(),
+		).toMatchObject({ state: "uncertain", upstream_order_id: "D1" });
+		expect(
+			await db
+				.prepare("SELECT content_encrypted FROM delivery_records WHERE id = ?")
+				.bind(supplier.delivery_record_id)
+				.first("content_encrypted"),
+		).toBeNull();
+		expect(
+			await db
+				.prepare(
+					"SELECT COUNT(*) AS n FROM outbox_events WHERE event_type = 'delivery.requested'",
+				)
+				.first("n"),
+		).toBe(0);
+		expect(posts).toBe(1);
+	});
+
+	it("claims service delivery using indexed purchase and delivery lookups", async () => {
+		const { supplier } = await pollingSupplier();
+		let claimSql = "";
+		let bindings: unknown[] = [];
+		const observedDb = {
+			prepare: (sql: string) => {
+				const statement = db.prepare(sql);
+				if (!sql.includes("FROM supplier_orders so JOIN delivery_records dr"))
+					return statement;
+				claimSql = sql;
+				return {
+					bind: (...values: unknown[]) => {
+						bindings = values;
+						return statement.bind(...values);
+					},
+				} as D1PreparedStatement;
+			},
+			batch: db.batch.bind(db),
+		} as D1Database;
+		await processSupplierOrder(observedDb, supplier.id, { fetcher });
+		expect(claimSql).not.toBe("");
+		const plan = await db
+			.prepare(`EXPLAIN QUERY PLAN ${claimSql}`)
+			.bind(...bindings)
+			.all<{ detail: string }>();
+		const detail = plan.results.map((row) => row.detail).join("\n");
+		for (const alias of ["so", "dr", "oi", "o"]) {
+			expect(detail).toMatch(new RegExp(`SEARCH ${alias} USING INDEX`));
+			expect(detail).not.toMatch(new RegExp(`SCAN ${alias}\\b`));
+		}
+		expect(posts).toBe(1);
+	});
+
 	const adminAudit = () => ({
 		request: new Request("https://shop.example/admin/suppliers/orders"),
 		actorUserId: accountId,

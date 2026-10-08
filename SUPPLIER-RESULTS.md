@@ -221,3 +221,21 @@ The list labels a separate purchase reference: Dhru uses the exact job UUID subm
 Manual-hold validation: 760 unit/security, 309 integration and 23 Bun runtime tests passed (1,092 total). Two existing TODO tests remain unexecuted and the manual provider smoke file is skipped. Typecheck, Biome and Workers/Bun builds passed, retaining existing unrelated Biome notices.
 
 人工核查验证：760 项单元及安全测试、309 项集成测试、23 项 Bun 运行时测试通过，共 1,092 项。原有两项 TODO 未执行，真实供应商手工测试文件跳过。类型检查、Biome 及 Workers/Bun 构建通过，保留已有无关 Biome 提示。
+
+## Service result commit / 服务结果写入
+
+Successful service reconciliation now rechecks the purchase state and version, selected account, credential revision, account lock, request reference and upstream order ID in the atomic delivery transaction. It also verifies the original delivery/item/parent relationship, an awaiting service delivery and a paid/fulfilling parent. A result for a different known upstream order is rejected before any delivery write.
+
+服务核验成功后，现在会在原子交付事务中再次核对采购状态及版本、已选账号、凭据版本、账号锁定、请求引用和上游订单号，同时确认原交付、订单项及客户订单关系、服务待供货状态，以及客户订单已支付或正在交付状态。与已知上游订单号不匹配的结果会在任何交付写入前被拒绝。
+
+The unique delivery outbox event is inserted conditionally as the transaction's claim. Both the supplier completion and encrypted delivery content require that exact newly inserted event ID. A losing, duplicate or stale response cannot save its result or manufacture a delivery event for incomplete historical rows. A purchase completed concurrently is acknowledged as a duplicate only when its stored upstream ID matches the result. Any failed stage rolls back the entire batch; recovery queries the existing purchase rather than submitting another order. Events still contain only delivery and order-item references.
+
+事务先按条件插入唯一交付事件作为本次写入凭据；采购完成状态和加密交付内容都必须依赖本次新插入事件的准确 ID。竞争失败、重复或过期的回复不能保存结果，也不能为不完整历史记录补造交付事件。对于竞争中先完成的采购，只有保存的上游订单号与结果一致时，才确认重复处理。任一步骤失败都会回滚整个批次；恢复时查询现有采购，不会再次下单。事件仍仅包含交付和订单项引用。
+
+Integration evidence covers identity/version changes during a successful GET, concurrent completion, refund/cancellation and delivery-state changes, incomplete supplied history, failure of each of the three commit stages, private delivery after recovery and the actual claim query's indexed plan. This change adds no migration or public callback capability and performs no deployment or live purchase. Browser acceptance and the approximately $1 provider smoke remain pending.
+
+集成验证覆盖成功 GET 期间的身份及版本变更、并发完成、退款或取消及交付状态变更、不完整已供货历史、三个写入步骤分别失败、恢复后的私密交付，以及实际写入查询的索引计划。本轮不增加迁移或公开回调能力，也不部署或执行真实采购。浏览器验收及约 $1 的供应商真实测试仍待完成。
+
+Service-commit validation: 760 unit/security, 314 integration and 23 Bun runtime tests passed (1,097 total). Two existing TODO tests remain unexecuted and the manual provider smoke file is skipped. Typecheck, Biome and Workers/Bun builds passed, retaining existing unrelated Biome notices.
+
+服务结果写入验证：760 项单元及安全测试、314 项集成测试、23 项 Bun 运行时测试通过，共 1,097 项。原有两项 TODO 未执行，真实供应商手工测试文件跳过。类型检查、Biome 及 Workers/Bun 构建通过，保留已有无关 Biome 提示。
