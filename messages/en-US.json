@@ -1677,5 +1677,9 @@
 	"supplier_action_changed": "The order changed while this action was running. The list is refreshing; review its current state before retrying.",
 	"supplier_action_unavailable": "This action is unavailable for the current order or account state.",
 	"supplier_action_account_locked": "This purchase must remain on its original account. Reconcile the existing upstream order.",
-	"supplier_action_not_found": "The supplier order no longer exists. Refresh the list."
+	"supplier_action_not_found": "The supplier order no longer exists. Refresh the list.",
+	"supplier_order_manual_review": "Needs manual review",
+	"supplier_order_manual_review_description": "No upstream order ID was saved. Verify the existing purchase in the supplier account using its purchase reference; do not purchase again.",
+	"supplier_action_order_id_missing": "This Dhru purchase has no upstream order ID to reconcile. Verify the existing purchase with the supplier; do not submit it again.",
+	"supplier_purchase_reference": "Purchase reference"
 }

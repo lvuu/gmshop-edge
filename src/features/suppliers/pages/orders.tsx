@@ -23,7 +23,10 @@ import {
 	supplierErrorLabel,
 	supplierOrderActionErrorMessage,
 } from "../error-label";
-import { supplierOrderActionAllowed } from "../order-actions";
+import {
+	supplierOrderActionAllowed,
+	supplierOrderNeedsManualReview,
+} from "../order-actions";
 import { supplierProviderLabel } from "../provider-label";
 import {
 	actSupplierOrderFn,
@@ -121,11 +124,15 @@ export function SupplierOrdersPage() {
 							{String(row.original.upstream_sku_name)}
 						</div>
 						<div className="truncate font-mono text-muted-foreground text-xs">
-							{String(
-								row.original.upstream_order_id ??
-									row.original.provider_request_no ??
-									"—",
-							)}
+							{row.original.upstream_order_id ?? "—"}
+						</div>
+						<div className="break-all text-muted-foreground text-xs">
+							{m.supplier_purchase_reference()}:{" "}
+							<span className="font-mono">
+								{row.original.provider === "dhru"
+									? row.original.id
+									: (row.original.provider_request_no ?? "—")}
+							</span>
 						</div>
 						<div
 							className="truncate text-muted-foreground text-xs"
@@ -169,6 +176,18 @@ export function SupplierOrdersPage() {
 				cell: ({ row }) => (
 					<div className="flex min-w-40 flex-col items-start gap-1.5">
 						<SupplierOrderStateBadge state={String(row.original.state)} />
+						{supplierOrderNeedsManualReview(
+							orderActionContext(row.original),
+						) ? (
+							<>
+								<Badge variant="outline">
+									{m.supplier_order_manual_review()}
+								</Badge>
+								<p className="max-w-64 text-wrap text-muted-foreground text-xs">
+									{m.supplier_order_manual_review_description()}
+								</p>
+							</>
+						) : null}
 						<div className="text-muted-foreground text-xs">
 							{m.supplier_attempt_count()}{" "}
 							{formatNumber(Number(row.original.attempt_count))}
@@ -217,12 +236,10 @@ export function SupplierOrdersPage() {
 								<DropdownMenuItem
 									disabled={
 										action.isPending ||
-										!supplierOrderActionAllowed("reconcile", {
-											state: row.original.state,
-											orderStatus: row.original.order_status,
-											accountId: row.original.account_id,
-											accountLockedAt: row.original.account_locked_at,
-										})
+										!supplierOrderActionAllowed(
+											"reconcile",
+											orderActionContext(row.original),
+										)
 									}
 									onClick={() =>
 										action.mutate({
@@ -239,12 +256,10 @@ export function SupplierOrdersPage() {
 								<DropdownMenuItem
 									disabled={
 										action.isPending ||
-										!supplierOrderActionAllowed("reselect", {
-											state: row.original.state,
-											orderStatus: row.original.order_status,
-											accountId: row.original.account_id,
-											accountLockedAt: row.original.account_locked_at,
-										})
+										!supplierOrderActionAllowed(
+											"reselect",
+											orderActionContext(row.original),
+										)
 									}
 									onClick={() =>
 										action.mutate({
@@ -288,6 +303,17 @@ export function SupplierOrdersPage() {
 			/>
 		</div>
 	);
+}
+
+function orderActionContext(order: Order) {
+	return {
+		state: order.state,
+		orderStatus: order.order_status,
+		accountId: order.account_id,
+		accountLockedAt: order.account_locked_at,
+		provider: order.provider,
+		upstreamOrderId: order.upstream_order_id,
+	};
 }
 
 function OrderMetric({

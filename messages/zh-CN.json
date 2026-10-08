@@ -1677,5 +1677,9 @@
 	"supplier_action_changed": "操作期间订单状态已变化。列表正在刷新，请检查当前状态后再重试。",
 	"supplier_action_unavailable": "当前订单或账户状态不允许执行此操作。",
 	"supplier_action_account_locked": "该采购必须保留原账户，请查询已有上游订单。",
-	"supplier_action_not_found": "采购订单已不存在，请刷新列表。"
+	"supplier_action_not_found": "采购订单已不存在，请刷新列表。",
+	"supplier_order_manual_review": "需人工核查",
+	"supplier_order_manual_review_description": "未保存上游订单号。请用采购参考编号在供应商账号中核查现有采购记录，勿再次采购。",
+	"supplier_action_order_id_missing": "此 Dhru 采购缺少上游订单号，暂无法核验。请先向供应商核实现有采购，勿重复下单。",
+	"supplier_purchase_reference": "采购参考编号"
 }

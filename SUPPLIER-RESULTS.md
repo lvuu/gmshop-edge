@@ -203,3 +203,21 @@ Integration checks cover the real queue handler acknowledging a final rejection,
 Final-rejection validation: 753 unit/security, 305 integration and 23 Bun runtime tests passed (1,081 total). Two existing TODO tests remain unexecuted and the manual provider smoke file is skipped. Typecheck, Biome and Workers/Bun builds passed, retaining existing unrelated Biome notices.
 
 最终拒单验证：753 项单元及安全测试、305 项集成测试、23 项 Bun 运行时测试通过，共 1,081 项。原有两项 TODO 未执行，真实供应商手工测试文件跳过。类型检查、Biome 及 Workers/Bun 构建通过，保留已有无关 Biome 提示。
+
+## Manual-hold operations / 人工核查操作
+
+An uncertain Dhru purchase with a selected account and no upstream order ID now displays a localized manual-review badge and a readable explanation. Both reconciliation and reselection are disabled; a submitting purchase is not prematurely labeled as a manual hold. A known Dhru order can still reconcile. The shared action policy also prevents reselection of any known upstream order, including historical rows without a selected account.
+
+已选账号但缺少上游订单号的 Dhru 待核验采购，现在会显示中英文人工核查标记及完整说明，禁止核验和重新选购；正常提交中的采购不会被提前标为人工核查。已有 Dhru 订单号时仍可核验。共用操作规则同时禁止对任何已有上游订单号的采购重新选购，包括未保留已选账号的历史记录。
+
+The administrative server enforces the same rules before writing an outbox or audit record and rechecks eligibility during the atomic write. It returns a fixed missing-ID code for otherwise eligible Dhru reconciliation attempts; reviewed localized messages hide raw exception details. Supplier provider and origin in the list come from the immutable purchase snapshot, and action eligibility uses that same provider rather than the mutable product binding. Existing structured permission checks remain on the administrative server entries.
+
+后台服务端在写入队列事件或审计前执行相同限制，并在原子写入时再次检查资格。原本可核验但缺少订单号的 Dhru 请求返回固定代码，由经过检查的本地化消息隐藏原始异常详情。列表中的供应商类型及来源地址读取采购快照，操作资格也使用该快照供应商，不依赖可变的商品绑定。后台入口继续执行原有结构化权限检查。
+
+The list labels a separate purchase reference: Dhru uses the exact job UUID submitted as reference_id; other providers retain their stored request reference. Operators can search either reference, the customer order number or the upstream order ID. Component checks verify both languages, readable hold text, disabled buttons, hidden private errors and the exact Dhru reference. D1 checks cover missing-ID rejection without writes, changed bindings, lost-ID races, historical known orders and reference searches. No arbitrary order-ID attachment, migration, deployment or live purchase is introduced. Browser/theme/mobile/keyboard acceptance remains pending.
+
+列表单独标注采购参考编号：Dhru 使用实际提交为 reference_id 的任务 UUID，其他供应商保留已存储的请求引用。可按这些编号、客户订单号或上游订单号搜索。组件检查覆盖双语言、可读核查说明、禁用按钮、隐藏私密错误和真实 Dhru 参考编号；D1 检查覆盖缺号时无写入拒绝、绑定变更、订单号丢失竞争、历史已知订单及编号搜索。本轮不引入任意订单号绑定、迁移、部署或真实采购，浏览器、主题、手机及键盘验收仍待完成。
+
+Manual-hold validation: 760 unit/security, 309 integration and 23 Bun runtime tests passed (1,092 total). Two existing TODO tests remain unexecuted and the manual provider smoke file is skipped. Typecheck, Biome and Workers/Bun builds passed, retaining existing unrelated Biome notices.
+
+人工核查验证：760 项单元及安全测试、309 项集成测试、23 项 Bun 运行时测试通过，共 1,092 项。原有两项 TODO 未执行，真实供应商手工测试文件跳过。类型检查、Biome 及 Workers/Bun 构建通过，保留已有无关 Biome 提示。

@@ -12,6 +12,8 @@ export function supplierOrderActionErrorMessage(error: unknown) {
 			return m.supplier_action_account_locked();
 		case "supplier_order_not_found":
 			return m.supplier_action_not_found();
+		case "supplier_order_id_missing":
+			return m.supplier_action_order_id_missing();
 		default:
 			return m.common_operation_failed();
 	}

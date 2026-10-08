@@ -7,7 +7,10 @@ import { createMultiStoreOrder } from "#/features/storefront/server/multi-order"
 import { getStoreOrder } from "#/features/storefront/server/order-query";
 import { createSupplierCredentialVault } from "#/features/suppliers/secrets";
 import { handleDhruSupplierCallback } from "#/features/suppliers/server/dhru-callback";
-import { queueSupplierOrderAction } from "#/features/suppliers/server/orders-admin";
+import {
+	listSupplierOrders,
+	queueSupplierOrderAction,
+} from "#/features/suppliers/server/orders-admin";
 import {
 	publishPendingSupplierOrders,
 	queueDueSupplierReconciliations,
@@ -1158,6 +1161,141 @@ describe("service products", { timeout: 30_000 }, () => {
 		if (!supplier) throw new Error("missing supplier");
 		return { order, supplier };
 	}
+	it("refuses manual-hold Dhru recovery using the immutable snapshot even after the binding provider changes", async () => {
+		const { order, supplier } = await pollingSupplier();
+		await db.batch([
+			db
+				.prepare(
+					"UPDATE supplier_orders SET upstream_order_id = NULL, next_retry_at = NULL WHERE id = ?",
+				)
+				.bind(supplier.id),
+			db.prepare(
+				"UPDATE supplier_bindings SET provider = 'gmshop_edge', normalized_api_origin = 'https://moved.example'",
+			),
+		]);
+		const before = await db
+			.prepare("SELECT * FROM supplier_orders WHERE id = ?")
+			.bind(supplier.id)
+			.first();
+		await expect(
+			queueSupplierOrderAction(
+				db,
+				{ id: supplier.id, action: "reconcile" },
+				adminAudit(),
+			),
+		).rejects.toMatchObject({ code: "supplier_order_id_missing" });
+		await expect(
+			queueSupplierOrderAction(
+				db,
+				{ id: supplier.id, action: "reselect" },
+				adminAudit(),
+			),
+		).rejects.toMatchObject({ code: "supplier_order_action_unavailable" });
+		expect(
+			await db
+				.prepare("SELECT * FROM supplier_orders WHERE id = ?")
+				.bind(supplier.id)
+				.first(),
+		).toEqual(before);
+		await db
+			.prepare("UPDATE shop_orders SET status = 'cancelled' WHERE id = ?")
+			.bind(order.id)
+			.run();
+		await expect(
+			queueSupplierOrderAction(
+				db,
+				{ id: supplier.id, action: "reconcile" },
+				adminAudit(),
+			),
+		).rejects.toMatchObject({ code: "supplier_order_action_unavailable" });
+		expect(await adminEffects()).toEqual({ outbox: 0, audit: 0 });
+		expect(posts).toBe(1);
+	});
+
+	it("finds the original Dhru purchase reference and origin after a mutable binding changes", async () => {
+		const { order, supplier } = await pollingSupplier();
+		await db
+			.prepare(
+				"UPDATE supplier_bindings SET provider = 'gmshop_edge', normalized_api_origin = 'https://moved.example'",
+			)
+			.run();
+		for (const search of [supplier.id, order.orderNumber, "D1"]) {
+			const result = await listSupplierOrders(db, {
+				search,
+				pageIndex: 0,
+				pageSize: 20,
+			});
+			expect(result.total).toBe(1);
+			expect(result.data[0]).toMatchObject({
+				id: supplier.id,
+				provider: "dhru",
+				normalized_api_origin: "https://supplier.example",
+			});
+			expect(JSON.stringify(result)).not.toContain("test-token");
+		}
+		expect(
+			await listSupplierOrders(db, {
+				search: "missing-reference",
+				pageIndex: 0,
+				pageSize: 20,
+			}),
+		).toMatchObject({ total: 0, data: [] });
+	});
+
+	it("does not queue or audit reconciliation when its known order ID disappears in the write race", async () => {
+		const { supplier } = await pollingSupplier();
+		const racingDb = {
+			prepare: db.prepare.bind(db),
+			batch: async (statements: D1PreparedStatement[]) => {
+				await db
+					.prepare(
+						"UPDATE supplier_orders SET upstream_order_id = NULL, next_retry_at = NULL WHERE id = ?",
+					)
+					.bind(supplier.id)
+					.run();
+				return db.batch(statements);
+			},
+		} as D1Database;
+		await expect(
+			queueSupplierOrderAction(
+				racingDb,
+				{ id: supplier.id, action: "reconcile" },
+				adminAudit(),
+			),
+		).rejects.toMatchObject({ code: "supplier_order_changed" });
+		expect(await adminEffects()).toEqual({ outbox: 0, audit: 0 });
+		expect(
+			await db
+				.prepare(
+					"SELECT state, upstream_order_id, next_retry_at FROM supplier_orders WHERE id = ?",
+				)
+				.bind(supplier.id)
+				.first(),
+		).toMatchObject({
+			state: "uncertain",
+			upstream_order_id: null,
+			next_retry_at: null,
+		});
+	});
+
+	it("refuses reselection of a historical known order without a selected account", async () => {
+		const { supplier } = await pollingSupplier();
+		await db
+			.prepare(`UPDATE supplier_orders SET state = 'failed',
+		 selected_account_id = NULL, selected_credentials_revision = NULL,
+		 provider_request_no = NULL, account_locked_at = NULL WHERE id = ?`)
+			.bind(supplier.id)
+			.run();
+		await expect(
+			queueSupplierOrderAction(
+				db,
+				{ id: supplier.id, action: "reselect" },
+				adminAudit(),
+			),
+		).rejects.toMatchObject({ code: "supplier_order_action_unavailable" });
+		expect(await adminEffects()).toEqual({ outbox: 0, audit: 0 });
+	});
+
 	async function adminEffects() {
 		return {
 			outbox: await db

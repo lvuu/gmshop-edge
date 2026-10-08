@@ -13,6 +13,7 @@ describe("supplier recovery feedback", () => {
 				["supplier_order_action_unavailable", m.supplier_action_unavailable()],
 				["supplier_order_account_locked", m.supplier_action_account_locked()],
 				["supplier_order_not_found", m.supplier_action_not_found()],
+				["supplier_order_id_missing", m.supplier_action_order_id_missing()],
 			]) {
 				expect(
 					supplierOrderActionErrorMessage({ code, message: "private-token" }),
