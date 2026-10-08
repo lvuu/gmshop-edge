@@ -1672,5 +1672,10 @@
 	"store_service_result": "Service result",
 	"store_service_one_time": "One-time service",
 	"store_service_processing": "Your service is processing. The result will appear here automatically when ready.",
-	"store_service_failed": "The service could not be completed. Contact support with your order number."
+	"store_service_failed": "The service could not be completed. Contact support with your order number.",
+	"supplier_action_pending_dispatch": "Recovery saved. Queue delivery is pending and will be retried automatically.",
+	"supplier_action_changed": "The order changed while this action was running. The list is refreshing; review its current state before retrying.",
+	"supplier_action_unavailable": "This action is unavailable for the current order or account state.",
+	"supplier_action_account_locked": "This purchase must remain on its original account. Reconcile the existing upstream order.",
+	"supplier_action_not_found": "The supplier order no longer exists. Refresh the list."
 }

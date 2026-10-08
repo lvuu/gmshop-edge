@@ -8,6 +8,7 @@ import { getStoreOrder } from "#/features/storefront/server/order-query";
 import { createSupplierCredentialVault } from "#/features/suppliers/secrets";
 import { handleDhruSupplierCallback } from "#/features/suppliers/server/dhru-callback";
 import { queueSupplierOrderAction } from "#/features/suppliers/server/orders-admin";
+import { publishPendingSupplierOrders } from "#/features/suppliers/server/outbox";
 import { processSupplierOrder } from "#/features/suppliers/server/process";
 import {
 	bindServiceSupplier,
@@ -463,6 +464,80 @@ describe("service products", { timeout: 30_000 }, () => {
 				.first("state"),
 		).toBe("failed");
 		expect(await adminEffects()).toEqual({ outbox: 0, audit: 0 });
+	});
+
+	it("reports durable recovery when transport fails and publishes it later", async () => {
+		const { supplier } = await failedSupplier();
+		const sendBatch = vi
+			.fn()
+			.mockRejectedValue(new Error("private-transport-error"));
+		const queue = { sendBatch } as unknown as Queue<
+			import("#/server/queue/types").SupplierQueueMessage
+		>;
+		await expect(
+			queueSupplierOrderAction(
+				db,
+				{ id: supplier.id, action: "reselect" },
+				adminAudit(),
+				queue,
+			),
+		).resolves.toMatchObject({ queued: true, dispatch: "pending" });
+		expect(await adminEffects()).toEqual({ outbox: 1, audit: 1 });
+		expect(
+			await db
+				.prepare(
+					"SELECT status FROM outbox_events WHERE idempotency_key LIKE 'supplier-admin-%'",
+				)
+				.first("status"),
+		).toBe("pending");
+		sendBatch.mockResolvedValue(undefined);
+		await publishPendingSupplierOrders(db, queue);
+		expect(
+			await db
+				.prepare(
+					"SELECT status FROM outbox_events WHERE idempotency_key LIKE 'supplier-admin-%'",
+				)
+				.first("status"),
+		).toBe("published");
+	});
+	it("publishes exactly the recovery event without consuming an older pending event", async () => {
+		const { supplier } = await failedSupplier();
+		const sendBatch = vi.fn().mockResolvedValue(undefined);
+		const queue = { sendBatch } as unknown as Queue<
+			import("#/server/queue/types").SupplierQueueMessage
+		>;
+		await expect(
+			queueSupplierOrderAction(
+				db,
+				{ id: supplier.id, action: "reselect" },
+				adminAudit(),
+				queue,
+			),
+		).resolves.toMatchObject({ queued: true, dispatch: "published" });
+		expect(sendBatch).toHaveBeenCalledTimes(1);
+		expect(sendBatch.mock.calls[0]?.[0]).toEqual([
+			{
+				body: {
+					kind: "commerce.supplier",
+					version: 1,
+					supplierOrderId: supplier.id,
+				},
+			},
+		]);
+		expect(
+			await db
+				.prepare(
+					"SELECT status FROM outbox_events WHERE idempotency_key LIKE 'supplier-admin-%'",
+				)
+				.first("status"),
+		).toBe("published");
+		expect(
+			await db
+				.prepare(
+					"SELECT COUNT(*) AS n FROM outbox_events WHERE event_type = 'supplier.requested' AND status = 'pending' AND idempotency_key NOT LIKE 'supplier-admin-%'",
+				)
+				.first("n"),
+		).toBe(1);
 	});
 
 	it("decrypts only the immutable customer input snapshot at submission", async () => {

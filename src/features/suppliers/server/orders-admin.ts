@@ -4,6 +4,7 @@ import { systemPermission } from "#/features/access/system-rbac";
 import { DomainError } from "#/lib/domain-error";
 import { clientIp } from "#/server/client-ip";
 import { getAdminRuntimeServerContext } from "#/server/context";
+import type { SupplierQueueMessage } from "#/server/queue/types";
 import { supplierOrderActionAllowed } from "../order-actions";
 import { supplierOrderActionSchema, supplierOrderListSchema } from "../schema";
 import { publishPendingSupplierOrders } from "./outbox";
@@ -98,16 +99,15 @@ export const actSupplierOrderFn = createServerFn({ method: "POST" })
 		const context = await getAdminRuntimeServerContext(
 			systemPermission("suppliers", "test"),
 		);
-		const result = await queueSupplierOrderAction(context.db, data, {
-			request: context.request,
-			actorUserId: context.currentUser.id,
-		});
-		if (context.env.COMMERCE_QUEUE)
-			await publishPendingSupplierOrders(
-				context.db,
-				context.env.COMMERCE_QUEUE,
-				1,
-			);
+		const result = await queueSupplierOrderAction(
+			context.db,
+			data,
+			{
+				request: context.request,
+				actorUserId: context.currentUser.id,
+			},
+			context.env.COMMERCE_QUEUE,
+		);
 		return result;
 	});
 
@@ -116,6 +116,7 @@ export async function queueSupplierOrderAction(
 	db: D1Database,
 	rawInput: z.input<typeof supplierOrderActionSchema>,
 	audit: { request: Request; actorUserId: string },
+	queue?: Queue<SupplierQueueMessage>,
 ) {
 	const data = supplierOrderActionSchema.parse(rawInput);
 	const order = await db
@@ -226,5 +227,14 @@ export async function queueSupplierOrderAction(
 			409,
 			"Supplier order changed; refresh and retry",
 		);
-	return { id: data.id, queued: true };
+	let dispatch: "published" | "pending" = "pending";
+	if (queue) {
+		try {
+			const result = await publishPendingSupplierOrders(db, queue, 1, outboxId);
+			if (result.published === 1) dispatch = "published";
+		} catch {
+			// The committed outbox remains authoritative; the scheduler retries delivery.
+		}
+	}
+	return { id: data.id, queued: true, dispatch };
 }

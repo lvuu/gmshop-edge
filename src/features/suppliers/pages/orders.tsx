@@ -19,7 +19,10 @@ import { PageHeader } from "#/layouts/components/page-header";
 import { formatDateTime, formatMinorAmount, formatNumber } from "#/lib/format";
 import { useCurrentProTableUrlState } from "#/lib/pro-table-url-state";
 import { m } from "#/paraglide/messages";
-import { supplierErrorLabel } from "../error-label";
+import {
+	supplierErrorLabel,
+	supplierOrderActionErrorMessage,
+} from "../error-label";
 import { supplierOrderActionAllowed } from "../order-actions";
 import { supplierProviderLabel } from "../provider-label";
 import {
@@ -36,13 +39,26 @@ export function SupplierOrdersPage() {
 	});
 	const client = useQueryClient();
 	const [refreshKey, setRefreshKey] = useState(0);
+	const refresh = useCallback(async () => {
+		await client.invalidateQueries({
+			queryKey: ["admin", "suppliers", "orders"],
+		});
+		setRefreshKey((value) => value + 1);
+	}, [client]);
 	const action = useMutation({
 		mutationFn: actSupplierOrderFn,
-		onSuccess: () => {
-			toast.success(m.supplier_action_queued());
-			setRefreshKey((value) => value + 1);
+		onSuccess: async (result) => {
+			toast.success(
+				result.dispatch === "published"
+					? m.supplier_action_queued()
+					: m.supplier_action_pending_dispatch(),
+			);
+			await refresh();
 		},
-		onError: () => toast.error(m.common_operation_failed()),
+		onError: async (error) => {
+			toast.error(supplierOrderActionErrorMessage(error));
+			await refresh();
+		},
 	});
 	const request = useCallback(
 		(state: ProTableState) => {

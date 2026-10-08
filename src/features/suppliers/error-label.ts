@@ -1,5 +1,22 @@
 import { m } from "#/paraglide/messages";
 
+export function supplierOrderActionErrorMessage(error: unknown) {
+	const code =
+		error && typeof error === "object" && "code" in error ? error.code : null;
+	switch (code) {
+		case "supplier_order_changed":
+			return m.supplier_action_changed();
+		case "supplier_order_action_unavailable":
+			return m.supplier_action_unavailable();
+		case "supplier_order_account_locked":
+			return m.supplier_action_account_locked();
+		case "supplier_order_not_found":
+			return m.supplier_action_not_found();
+		default:
+			return m.common_operation_failed();
+	}
+}
+
 export function supplierErrorLabel(code: string) {
 	const labels: Record<string, () => string> = {
 		supplier_service_not_ready: m.supplier_error_service_not_ready,

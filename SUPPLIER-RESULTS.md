@@ -117,3 +117,25 @@ Integration checks cover failed-purchase recovery and authenticated reconciliati
 Recovery validation: 738 unit/security, 288 integration and 23 Bun runtime tests passed (1,049 total), with two existing TODO tests unexecuted. Typecheck, Biome and Workers/Bun builds passed.
 
 恢复流程验证：738 项单元及安全测试、288 项集成测试、23 项 Bun 运行时测试通过，共 1,049 项；原有两项 TODO 未执行。类型检查、Biome 及 Workers/Bun 构建通过。
+
+## Recovery dispatch feedback / 恢复投递反馈
+
+The recovery action returns whether its committed outbox event was published immediately or remains pending. A queue transport or post-send registry failure does not misreport the already-committed recovery as a failed mutation. The scheduled supplier publisher retries pending events; duplicate queue delivery remains handled by the existing procurement idempotency. Immediate dispatch targets this recovery's exact outbox ID and leaves older pending events for the normal scheduler. It never starts a supplier purchase within the administrative request.
+
+恢复操作返回已提交的入队事件是已立即投递，还是等待投递。队列传输或发送后登记失败，不再把已持久化的恢复操作误报为变更失败。定时供应商投递器重试待投递事件；重复队列交付仍由现有采购幂等逻辑处理。立即投递只针对本次恢复的确切事件 ID，旧待投递事件保留给正常调度器。后台请求不会直接执行供应商采购。
+
+The UI distinguishes published from saved/pending feedback. It maps only reviewed conflict, unavailable, locked and missing-order codes to English/Chinese copy, using a generic fallback for all unreviewed errors. Both success and error invalidate the supplier-order query cache before refreshing the table, including caches with an infinite stale time. A failed action is never automatically submitted again.
+
+界面区分已投递与已保存待投递。仅将经过检查的状态冲突、操作不可用、账户锁定和订单不存在代码映射为中英文文案，未知错误使用通用提示。成功和失败均在刷新表格前使采购订单查询缓存失效，即使缓存配置了无限有效期。失败操作不会自动重新提交。
+
+Integration checks cover transport failure followed by scheduled publication and targeted publication that preserves an older pending event. Component checks cover pending-success feedback, localized stale-state feedback and query-cache invalidation; both-locale checks verify raw errors are hidden. Browser and real paid-provider smoke remain pending; no production deployment or live purchase is performed.
+
+集成检查覆盖传输失败后由调度器投递，以及精确投递时保留旧待投递事件。组件检查覆盖待投递成功反馈、状态冲突的本地化提示和查询缓存失效；双语言检查确认隐藏原始错误。浏览器及真实付费供应商验收仍待完成，本轮不进行生产部署或真实采购。
+
+The final run exposed an existing supplier-API authentication test dependency on the real minute window and on a preceding test's counters. The fixture now fixes Date.now without replacing timers, clears rate-limit/replay rows between cases, and gives its 60-request flood check a scoped 15-second budget. Production authentication limits are unchanged.
+
+最终检查发现已有供应商 API 鉴权测试依赖真实分钟窗口和前一个用例的计数。测试现固定 Date.now，但不替换定时器；每项用例清理限流和重放记录；60 次请求的洪泛检查使用局部 15 秒时限。生产鉴权限额保持原值。
+
+Final feedback validation: 742 unit/security, 290 integration and 23 Bun runtime tests passed (1,055 total); two existing TODO tests remain unexecuted. Typecheck, Biome and both Workers/Bun builds passed.
+
+最终反馈验证：742 项单元及安全测试、290 项集成测试、23 项 Bun 运行时测试通过，共 1,055 项；原有两项 TODO 未执行。类型检查、Biome 及 Workers/Bun 构建通过。

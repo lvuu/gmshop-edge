@@ -1672,5 +1672,10 @@
 	"store_service_result": "服务结果",
 	"store_service_one_time": "一次性服务",
 	"store_service_processing": "服务正在处理中，完成后结果将自动显示在此处。",
-	"store_service_failed": "服务未能完成，请提供订单号联系客服。"
+	"store_service_failed": "服务未能完成，请提供订单号联系客服。",
+	"supplier_action_pending_dispatch": "恢复操作已保存，队列投递待完成，系统将自动重试。",
+	"supplier_action_changed": "操作期间订单状态已变化。列表正在刷新，请检查当前状态后再重试。",
+	"supplier_action_unavailable": "当前订单或账户状态不允许执行此操作。",
+	"supplier_action_account_locked": "该采购必须保留原账户，请查询已有上游订单。",
+	"supplier_action_not_found": "采购订单已不存在，请刷新列表。"
 }

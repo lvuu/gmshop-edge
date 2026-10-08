@@ -9,6 +9,7 @@ export async function publishPendingSupplierOrders(
 	db: D1Database,
 	queue: Queue<SupplierQueueMessage>,
 	limit = 25,
+	outboxId?: string,
 ) {
 	const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
 	const rows = await db
@@ -16,9 +17,10 @@ export async function publishPendingSupplierOrders(
 			`SELECT id, payload FROM outbox_events
 			 WHERE event_type = 'supplier.requested' AND status = 'pending'
 			 AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+		 ${outboxId ? "AND id = ?" : ""}
 			 ORDER BY created_at, id LIMIT ?`,
 		)
-		.bind(Date.now(), boundedLimit)
+		.bind(Date.now(), ...(outboxId ? [outboxId] : []), boundedLimit)
 		.all<{ id: string; payload: string }>();
 	if (!rows.results.length) return { published: 0 };
 	const messages = rows.results.map((row) => ({
