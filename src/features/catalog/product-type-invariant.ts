@@ -3,7 +3,7 @@ import { DomainError } from "#/lib/domain-error";
 export async function assertProductTypeChange(
 	db: D1Database,
 	productId: string,
-	productType: "stock" | "download" | "automation",
+	productType: "stock" | "download" | "automation" | "service",
 ) {
 	const current = await db
 		.prepare("SELECT product_type FROM products WHERE id = ? LIMIT 1")

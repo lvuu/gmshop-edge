@@ -201,7 +201,7 @@ async function loadDeliveryPresentation(db: D1Database, deliveryId: string) {
 		)
 		.bind(deliveryId)
 		.first<{
-			delivery_component_type: "stock" | "download" | "automation";
+			delivery_component_type: "stock" | "download" | "automation" | "service";
 			duration_ms: number | null;
 			usage_limit: number | null;
 			access_limit: number | null;
@@ -224,7 +224,10 @@ async function loadDeliveryPresentation(db: D1Database, deliveryId: string) {
 	};
 }
 
-function deliveryAssetType(type: "stock" | "download" | "automation") {
+function deliveryAssetType(
+	type: "stock" | "download" | "automation" | "service",
+) {
+	if (type === "service") return "service_result" as const;
 	if (type === "stock") return "stock_secret" as const;
 	if (type === "download") return "download_asset" as const;
 	return "automation_artifact" as const;

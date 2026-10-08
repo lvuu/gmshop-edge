@@ -33,7 +33,10 @@ export async function revealStoreDelivery(
 		.prepare(`SELECT dr.content_encrypted FROM delivery_records dr
   JOIN shop_order_items oi ON oi.id = dr.order_item_id
   WHERE dr.id = ? AND oi.order_id = ? AND dr.status = 'delivered'
-  AND dr.delivery_type = 'service' AND dr.content_encrypted IS NOT NULL`)
+  AND dr.delivery_type = 'service' AND dr.content_encrypted IS NOT NULL
+  AND EXISTS (SELECT 1 FROM shop_orders o WHERE o.id = oi.order_id AND o.status IN ('completed', 'fulfilling'))
+  AND EXISTS (SELECT 1 FROM entitlement_grants g JOIN customer_entitlements ce ON ce.id = g.entitlement_id
+   WHERE g.source_order_item_id = oi.id AND g.status = 'active' AND ce.status = 'active')`)
 		.bind(input.deliveryId, order.id)
 		.first<{ content_encrypted: string }>();
 	if (service) {

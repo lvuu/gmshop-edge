@@ -9,7 +9,7 @@ it("preserves populated delivery records and referencing rows while enabling ser
 		const files = readdirSync(directory)
 			.filter((name) => /^\d+_.*\.sql$/.test(name))
 			.sort();
-		for (const file of files.filter((name) => !name.startsWith("0007_")))
+		for (const file of files.filter((name) => name < "0007_"))
 			db.exec(readFileSync(new URL(file, directory), "utf8"));
 		db.exec(`PRAGMA foreign_keys=ON;
    INSERT INTO products (id, name, product_type, status) VALUES ('p', 'Product', 'stock', 'active');

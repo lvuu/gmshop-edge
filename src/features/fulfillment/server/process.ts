@@ -145,7 +145,10 @@ export async function processDelivery(
 				delivery.order_version,
 			),
 	];
-	if (delivery.delivery_type === "stock")
+	if (
+		delivery.delivery_type === "stock" ||
+		delivery.delivery_type === "service"
+	)
 		statements.push(
 			db
 				.prepare(
@@ -224,7 +227,10 @@ export async function processDelivery(
 			)
 			.bind(now, now, delivery.id),
 	);
-	if (delivery.delivery_type === "stock")
+	if (
+		delivery.delivery_type === "stock" ||
+		delivery.delivery_type === "service"
+	)
 		statements.push(
 			...activateEntitlementGrantStatements(db, delivery.order_item_id, now),
 		);

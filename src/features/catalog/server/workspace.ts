@@ -74,7 +74,8 @@ export const getProductWorkspaceFn = createServerFn({ method: "GET" })
 				deliveryAttention: Number(product.delivery_attention),
 				failedBuilds: Number(product.failed_builds),
 				deliveryTypes: resultRows(deliveryTypes).map(
-					(row) => String(row.type) as "stock" | "download" | "automation",
+					(row) =>
+						String(row.type) as "stock" | "download" | "automation" | "service",
 				),
 			},
 			sales: resultRows(sales).map((row) => ({

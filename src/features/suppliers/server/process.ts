@@ -8,12 +8,13 @@ import {
 	runTrackedTask,
 } from "#/features/operations/server/task-runs";
 import { DomainError } from "#/lib/domain-error";
-import { encryptSecret } from "#/lib/secrets";
+import { decryptSecret, encryptSecret } from "#/lib/secrets";
 import { loadRuntimeConfig } from "#/server/runtime-config";
 import { multiplyMinor } from "../money";
 import { providerRequestNumber } from "../providers/signatures";
 import {
 	type SupplierPurchaseResult,
+	supplierServiceOrderInputSchema,
 	supplierSuppliedResultSchema,
 } from "../schema";
 import {
@@ -27,6 +28,7 @@ type SupplierOrderContext = {
 	order_item_id: string;
 	delivery_record_id: string;
 	quantity: number;
+	currency: string;
 	state:
 		| "pending"
 		| "selecting"
@@ -43,12 +45,13 @@ type SupplierOrderContext = {
 };
 
 type BindingSnapshot = {
-	provider: "acg" | "dujiao_next" | "gmshop_edge";
+	provider: "acg" | "dujiao_next" | "gmshop_edge" | "dhru";
 	normalizedApiOrigin: string;
 	protocolVersion: string;
 	upstreamProductId: string;
 	upstreamSkuId: string;
 	maxCostMinor: string;
+	currencyDecimals?: number;
 };
 
 type CandidateAccount = SupplierAccountRuntimeRow & {
@@ -132,6 +135,18 @@ async function processSupplierOrderUnlocked(
 			409,
 			"Supplier order cannot be processed",
 		);
+	const fulfillable = await db
+		.prepare(`SELECT 1 AS ready FROM shop_order_items oi
+	 JOIN shop_orders o ON o.id = oi.order_id WHERE oi.id = ? AND o.status IN ('paid', 'fulfilling')`)
+		.bind(order.order_item_id)
+		.first();
+	if (!fulfillable)
+		throw new DomainError(
+			"supplier_order_terminal",
+			409,
+			"Order cannot be supplied",
+			{ retryable: false },
+		);
 	const runtime = await loadRuntimeConfig(db);
 	if (!runtime.commerceSecret)
 		throw new DomainError(
@@ -140,6 +155,12 @@ async function processSupplierOrderUnlocked(
 			"Supplier configuration unavailable",
 		);
 	const snapshot = parseBindingSnapshot(order.binding_snapshot_json);
+	const service = await loadServiceInput(
+		db,
+		order.order_item_id,
+		snapshot,
+		runtime.commerceSecret,
+	);
 	if (order.selected_account_id) {
 		const account = await loadSelectedAccount(db, order.selected_account_id);
 		if (!account || !order.selected_credentials_revision)
@@ -164,8 +185,14 @@ async function processSupplierOrderUnlocked(
 			skuId: snapshot.upstreamSkuId,
 			quantity: order.quantity,
 			requestNo: order.provider_request_no ?? "",
-			callbackUrl: callbackUrl(options.callbackOrigin, account.id),
+			callbackUrl: service
+				? serviceCallbackUrl(
+						options.callbackOrigin ?? runtime.betterAuthUrl,
+						account.id,
+					)
+				: callbackUrl(options.callbackOrigin, account.id),
 			traceId: order.id,
+			service,
 		});
 		return applyPurchaseResult(db, order, result, runtime.commerceSecret);
 	}
@@ -178,7 +205,12 @@ async function processSupplierOrderUnlocked(
 		)
 		.bind(now, order.id)
 		.run();
-	const candidates = await candidateAccounts(db, snapshot, now);
+	const candidates = await candidateAccounts(
+		db,
+		snapshot,
+		now,
+		service ? order.currency : null,
+	);
 	for (const candidate of candidates) {
 		try {
 			return await runTrackedTask(
@@ -201,7 +233,12 @@ async function processSupplierOrderUnlocked(
 					});
 					const [connection, sku] = await Promise.all([
 						adapter.testConnection(),
-						adapter.getSku(snapshot.upstreamProductId, snapshot.upstreamSkuId),
+						service
+							? serviceQuote(adapter, snapshot.upstreamProductId)
+							: adapter.getSku(
+									snapshot.upstreamProductId,
+									snapshot.upstreamSkuId,
+								),
 					]);
 					const totalCostMinor = multiplyMinor(sku.costMinor, order.quantity);
 					await assertCandidateBudget(
@@ -209,7 +246,7 @@ async function processSupplierOrderUnlocked(
 						candidate,
 						connection.balance.amountMinor,
 						totalCostMinor,
-						sku.stockQuantity,
+						service ? order.quantity : sku.stockQuantity,
 						order.quantity,
 						sku.active,
 						sku.costMinor,
@@ -229,7 +266,8 @@ async function processSupplierOrderUnlocked(
 							 selection_count = selection_count + 1, submitted_at = ?,
 							 next_retry_at = NULL, last_error_code = NULL, updated_at = ?
 							 WHERE id = ? AND selected_account_id IS NULL
-							 AND state IN ('pending', 'selecting')`,
+							 AND state IN ('pending', 'selecting')
+ AND EXISTS (SELECT 1 FROM shop_order_items oi JOIN shop_orders o ON o.id = oi.order_id WHERE oi.id = supplier_orders.order_item_id AND o.status IN ('paid', 'fulfilling'))`,
 						)
 						.bind(
 							candidate.id,
@@ -262,8 +300,14 @@ async function processSupplierOrderUnlocked(
 						skuId: snapshot.upstreamSkuId,
 						quantity: order.quantity,
 						requestNo,
-						callbackUrl: callbackUrl(options.callbackOrigin, candidate.id),
+						callbackUrl: service
+							? serviceCallbackUrl(
+									options.callbackOrigin ?? runtime.betterAuthUrl,
+									candidate.id,
+								)
+							: callbackUrl(options.callbackOrigin, candidate.id),
 						traceId: order.id,
+						service,
 					});
 					return applyPurchaseResult(
 						db,
@@ -554,12 +598,15 @@ async function candidateAccounts(
 	db: D1Database,
 	snapshot: BindingSnapshot,
 	now: number,
+	currency: string | null,
 ) {
 	const rows = await db
 		.prepare(
 			`SELECT * FROM supplier_accounts WHERE provider = ?
 			 AND normalized_api_origin = ? AND protocol_version = ?
 			 AND enabled = 1 AND health_status <> 'unavailable'
+			 AND (? IS NULL OR currency = ?)
+			 AND (? IS NULL OR currency_decimals = ?)
 			 AND (cooldown_until IS NULL OR cooldown_until <= ?)
 			 ORDER BY consecutive_failures, COALESCE(last_selected_at, 0),
 			 LENGTH(balance_minor) DESC, balance_minor DESC, id LIMIT 20`,
@@ -568,6 +615,10 @@ async function candidateAccounts(
 			snapshot.provider,
 			snapshot.normalizedApiOrigin,
 			snapshot.protocolVersion,
+			currency,
+			currency,
+			currency ? (snapshot.currencyDecimals ?? null) : null,
+			currency ? (snapshot.currencyDecimals ?? null) : null,
 			now,
 		)
 		.all<CandidateAccount>();
@@ -676,8 +727,8 @@ function loadSelectedAccount(db: D1Database, id: string) {
 function parseBindingSnapshot(value: string): BindingSnapshot {
 	const parsed = JSON.parse(value) as Partial<BindingSnapshot>;
 	if (
-		!(["acg", "dujiao_next", "gmshop_edge"] as const).includes(
-			parsed.provider as "acg" | "dujiao_next" | "gmshop_edge",
+		!(["acg", "dujiao_next", "gmshop_edge", "dhru"] as const).includes(
+			parsed.provider as "acg" | "dujiao_next" | "gmshop_edge" | "dhru",
 		) ||
 		!parsed.normalizedApiOrigin ||
 		!parsed.protocolVersion ||
@@ -710,4 +761,66 @@ function isUncertainError(error: unknown) {
 
 function errorCode(error: unknown) {
 	return error instanceof DomainError ? error.code : "supplier_request_failed";
+}
+
+async function serviceQuote(
+	adapter: import("../providers/types").SupplierAdapter,
+	productId: string,
+) {
+	if (!adapter.getServiceQuote)
+		throw new DomainError(
+			"supplier_service_not_ready",
+			409,
+			"Provider does not support service quotes",
+			{ retryable: false },
+		);
+	const quote = await adapter.getServiceQuote(productId);
+	return { ...quote, active: true, stockQuantity: 0 };
+}
+async function loadServiceInput(
+	db: D1Database,
+	orderItemId: string,
+	snapshot: BindingSnapshot,
+	secret: string,
+) {
+	const item = await db
+		.prepare(
+			"SELECT delivery_component_type, input_values_json, sensitive_input_values_json FROM shop_order_items WHERE id = ?",
+		)
+		.bind(orderItemId)
+		.first<{
+			delivery_component_type: string;
+			input_values_json: string;
+			sensitive_input_values_json: string;
+		}>();
+	if (item?.delivery_component_type !== "service") {
+		if (snapshot.provider === "dhru")
+			throw new DomainError(
+				"supplier_delivery_type_mismatch",
+				409,
+				"Dhru requires a service product",
+				{ retryable: false },
+			);
+		return undefined;
+	}
+	const inputData = JSON.parse(item.input_values_json) as Record<
+		string,
+		string
+	>;
+	const sensitive = JSON.parse(item.sensitive_input_values_json) as Record<
+		string,
+		{ envelope: string }
+	>;
+	for (const [key, value] of Object.entries(sensitive))
+		inputData[key] = await decryptSecret(value.envelope, secret, "order-input");
+	return supplierServiceOrderInputSchema.parse({
+		productId: snapshot.upstreamProductId,
+		inputData,
+	});
+}
+function serviceCallbackUrl(origin: string, accountId: string) {
+	return new URL(
+		`/api/suppliers/dhru/callback/${encodeURIComponent(accountId)}`,
+		origin,
+	).toString();
 }

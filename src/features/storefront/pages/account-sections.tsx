@@ -688,9 +688,12 @@ function AccountEntitlementActions({
 	entitlement: Account["entitlements"][number];
 }) {
 	const router = useRouter();
-	const supportsAccountActions = ["stock", "download", "automation"].includes(
-		entitlement.type,
-	);
+	const supportsAccountActions = [
+		"stock",
+		"download",
+		"automation",
+		"service",
+	].includes(entitlement.type);
 	const order = useQuery({
 		queryKey: ["storefront", "account", "order", entitlement.orderNumber],
 		queryFn: () =>
@@ -734,7 +737,7 @@ function AccountEntitlementActions({
 				)
 			: [];
 	const stockDelivery =
-		entitlement.type === "stock"
+		entitlement.type === "stock" || entitlement.type === "service"
 			? data.deliveries.find(
 					(delivery) =>
 						delivery.entitlementId === entitlement.id &&

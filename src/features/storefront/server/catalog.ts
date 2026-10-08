@@ -81,7 +81,8 @@ export const listStorefrontCatalogFn = createServerFn({ method: "GET" })
 				productType: String(row.product_type) as
 					| "stock"
 					| "download"
-					| "automation",
+					| "automation"
+					| "service",
 				tags: JSON.parse(String(row.tags_json)) as string[],
 				coverUrl: row.cover_object_key
 					? `/api/shop/products/${row.id}/cover?v=${row.updated_at}`
@@ -96,7 +97,7 @@ export const listStorefrontCatalogFn = createServerFn({ method: "GET" })
 				availableStock: Number(row.available_stock),
 				salesCount: Number(row.sales_count),
 				deliveryTypes: JSON.parse(String(row.delivery_types)) as Array<
-					"stock" | "download" | "automation"
+					"stock" | "download" | "automation" | "service"
 				>,
 			})),
 		};
@@ -145,7 +146,8 @@ export const getStorefrontProductFn = createServerFn({ method: "GET" })
 			productType: String(product.product_type) as
 				| "stock"
 				| "download"
-				| "automation",
+				| "automation"
+				| "service",
 			tags: JSON.parse(String(product.tags_json)) as string[],
 			coverUrl: product.cover_object_key
 				? `/api/shop/products/${product.id}/cover?v=${product.updated_at}`
@@ -180,7 +182,8 @@ function presentSellableItem(row: Row) {
 		deliveryType: String(row.delivery_type) as
 			| "stock"
 			| "download"
-			| "automation",
+			| "automation"
+			| "service",
 		durationMs: nullableNumber(row.duration_ms),
 		usageLimit: nullableNumber(row.usage_limit),
 		accessLimit: nullableNumber(row.access_limit),

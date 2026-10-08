@@ -20,7 +20,7 @@ type SellableItemContext = {
 	currency: string;
 	currency_decimals: number;
 	delivery_component_id: string;
-	delivery_component_type: "stock" | "download" | "automation";
+	delivery_component_type: "stock" | "download" | "automation" | "service";
 	delivery_component_version: number;
 	duration_ms: number | null;
 	usage_limit: number | null;
@@ -145,6 +145,22 @@ export async function createMultiStoreOrder(
 			sellableItem,
 			item.quantity,
 		);
+		if (sellableItem.delivery_component_type === "service") {
+			if (sellableItem.fulfillment_source !== "supplier")
+				throw new DomainError(
+					"supplier_binding_unavailable",
+					409,
+					"Service requires supplier fulfillment",
+				);
+			await assertSupplierAvailability(
+				db,
+				sellableItem.sellable_item_id,
+				item.quantity,
+				false,
+				sellableItem.currency,
+				sellableItem.currency_decimals,
+			);
+		}
 		if (sellableItem.delivery_component_type === "stock")
 			await assertStockAvailability(db, sellableItem, item.quantity);
 		if (item.renewedFromEntitlementId)
@@ -547,6 +563,9 @@ async function assertSupplierAvailability(
 	db: D1Database,
 	sellableItemId: string,
 	quantity: number,
+	requireStock = true,
+	currency: string | null = null,
+	currencyDecimals: number | null = null,
 ) {
 	const now = Date.now();
 	const binding = await db
@@ -555,10 +574,14 @@ async function assertSupplierAvailability(
 			 reference_cost_minor, max_cost_minor, stock_quantity
 			 FROM supplier_bindings
 			 WHERE sellable_item_id = ? AND enabled = 1
-			  AND remote_status = 'active' AND last_synced_at >= ?
+			  AND remote_status = 'active' AND (? = 0 OR last_synced_at >= ?)
 			 LIMIT 1`,
 		)
-		.bind(sellableItemId, now - SUPPLIER_SNAPSHOT_MAX_AGE_MS)
+		.bind(
+			sellableItemId,
+			requireStock ? 1 : 0,
+			now - SUPPLIER_SNAPSHOT_MAX_AGE_MS,
+		)
 		.first<{
 			provider: string;
 			normalized_api_origin: string;
@@ -570,7 +593,7 @@ async function assertSupplierAvailability(
 	if (
 		!binding ||
 		BigInt(binding.reference_cost_minor) > BigInt(binding.max_cost_minor) ||
-		Number(binding.stock_quantity) < quantity
+		(requireStock && Number(binding.stock_quantity) < quantity)
 	)
 		throw new DomainError(
 			"supplier_inventory_unavailable",
@@ -583,6 +606,8 @@ async function assertSupplierAvailability(
 			 FROM supplier_accounts
 			 WHERE provider = ? AND normalized_api_origin = ? AND protocol_version = ?
 			  AND enabled = 1 AND health_status <> 'unavailable'
+			  AND (? IS NULL OR currency = ?)
+			  AND (? IS NULL OR currency_decimals = ?)
 			  AND (cooldown_until IS NULL OR cooldown_until <= ?)
 			  AND balance_minor IS NOT NULL
 			 ORDER BY id LIMIT 20`,
@@ -591,6 +616,10 @@ async function assertSupplierAvailability(
 			binding.provider,
 			binding.normalized_api_origin,
 			binding.protocol_version,
+			currency,
+			currency,
+			currencyDecimals,
+			currencyDecimals,
 			now,
 		)
 		.all<{

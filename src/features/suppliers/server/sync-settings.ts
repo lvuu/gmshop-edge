@@ -80,7 +80,7 @@ export async function syncAllSupplierCatalogs(input: {
 	const rows = await input.db
 		.prepare(
 			`SELECT DISTINCT provider, normalized_api_origin, protocol_version
-			 FROM supplier_accounts WHERE enabled = 1
+			 FROM supplier_accounts WHERE enabled = 1 AND provider <> 'dhru'
 			 ORDER BY provider, normalized_api_origin, protocol_version`,
 		)
 		.all<SourceRow>();

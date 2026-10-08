@@ -35,6 +35,9 @@ export interface SupplierAdapter {
 		updatedAfter?: string;
 		includeInactive?: boolean;
 	}): Promise<{ products: SupplierProduct[]; total: number }>;
+	getServiceQuote?(
+		productId: string,
+	): Promise<{ name: string; costMinor: string }>;
 	getSku(productId: string, skuId: string): Promise<SupplierSku>;
 	submitOrder(input: {
 		skuId: string;

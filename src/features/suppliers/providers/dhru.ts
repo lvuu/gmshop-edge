@@ -1,4 +1,4 @@
-import { ZodError } from "zod";
+import { ZodError, z } from "zod";
 import { DomainError } from "#/lib/domain-error";
 import { decimalToMinor } from "../money";
 import {
@@ -53,6 +53,18 @@ export class DhruAdapter implements SupplierAdapter {
 
 	async listProducts(): ReturnType<SupplierAdapter["listProducts"]> {
 		throw serviceNotReady();
+	}
+	async getServiceQuote(productId: string) {
+		const product = z
+			.object({ name: z.string(), price: z.string().regex(/^\d+(?:\.\d+)?$/) })
+			.parse(await this.client.getProduct(productId));
+		const price = product.price.includes(".")
+			? product.price.replace(/0+$/, "").replace(/\.$/, "")
+			: product.price;
+		return {
+			name: product.name,
+			costMinor: decimalToMinor(price, this.input.currencyDecimals),
+		};
 	}
 	async getSku(): ReturnType<SupplierAdapter["getSku"]> {
 		throw serviceNotReady();

@@ -5,7 +5,7 @@ export type EntitlementOrderItem = {
 	sellable_item_id: string;
 	product_id: string;
 	delivery_component_id: string;
-	delivery_component_type: "stock" | "download" | "automation";
+	delivery_component_type: "stock" | "download" | "automation" | "service";
 	quantity: number;
 	duration_ms: number | null;
 	usage_limit: number | null;
@@ -167,7 +167,11 @@ export async function consumeEntitlementAccess(
 	db: D1Database,
 	input: {
 		entitlementId: string;
-		assetType: "stock_secret" | "download_asset" | "automation_artifact";
+		assetType:
+			| "stock_secret"
+			| "download_asset"
+			| "automation_artifact"
+			| "service_result";
 		assetId: string;
 		eventType: "revealed" | "downloaded" | "email_content_sent";
 		actorType: "customer" | "admin" | "system";

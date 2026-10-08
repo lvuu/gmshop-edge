@@ -82,14 +82,15 @@ describe("catalog product list", () => {
 				new MouseEvent("pointerdown", { bubbles: true, button: 0 }),
 			),
 		);
-		const firstType =
-			document.body.querySelector<HTMLElement>('[role="menuitem"]');
+		const firstType = Array.from(
+			document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+		).at(-1);
 		expect(firstType).not.toBeNull();
-		expect(document.body.querySelectorAll('[role="menuitem"]')).toHaveLength(3);
+		expect(document.body.querySelectorAll('[role="menuitem"]')).toHaveLength(4);
 		await act(async () => firstType?.click());
 		expect(mocks.navigate).toHaveBeenCalledWith({
 			to: "/admin/products/new",
-			search: { type: "stock" },
+			search: { type: "service" },
 		});
 	});
 

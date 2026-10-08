@@ -905,7 +905,7 @@ function SellableItemsEditor({
 								)
 							}
 						/>
-						{component ? (
+						{component && component.type !== "service" ? (
 							<div className="w-36">
 								<EntitlementPresetSelect
 									component={component}
@@ -1077,7 +1077,7 @@ function SellableItemsEditor({
 									value={sellableItem.maximumPerCustomer ?? ""}
 								/>
 							</FormItem>
-							{component ? (
+							{component && component.type !== "service" ? (
 								<FormItem
 									label={m.catalog_duration_ms()}
 									tooltip={m.catalog_duration_ms_tooltip()}
@@ -1266,7 +1266,10 @@ function ComponentEditor({
 				</div>
 			) : null}
 			{sellableItem.fulfillmentSource === "supplier" ? (
-				<SupplierFulfillmentPanel sellableItem={sellableItem} />
+				<SupplierFulfillmentPanel
+					sellableItem={sellableItem}
+					service={component.type === "service"}
+				/>
 			) : persistedIds.has(component.id) ? (
 				<ComponentOperations component={component} productId={productId} />
 			) : (
@@ -1284,8 +1287,10 @@ function ComponentEditor({
 
 function SupplierFulfillmentPanel({
 	sellableItem,
+	service,
 }: {
 	sellableItem: SellableItem;
+	service: boolean;
 }) {
 	const binding = sellableItem.supplierBinding;
 	return (
@@ -1296,31 +1301,39 @@ function SupplierFulfillmentPanel({
 						{m.catalog_supplier_fulfillment()}
 					</p>
 					<p className="text-muted-foreground text-sm">
-						{m.catalog_supplier_fulfillment_description()}
+						{service
+							? m.catalog_service_fulfillment_description()
+							: m.catalog_supplier_fulfillment_description()}
 					</p>
 				</div>
-				<ProButton asChild size="sm" variant="outline">
-					<Link
-						search={
-							binding
-								? {
-										q: binding.upstreamSkuId,
-										source: `${binding.provider}:${binding.normalizedApiOrigin}`,
-									}
-								: {}
-						}
-						to="/admin/suppliers/products"
-					>
-						{m.catalog_supplier_manage_binding()}
-						<ChevronRight />
-					</Link>
-				</ProButton>
+				{!service ? (
+					<ProButton asChild size="sm" variant="outline">
+						<Link
+							search={
+								binding
+									? {
+											q: binding.upstreamSkuId,
+											source: `${binding.provider}:${binding.normalizedApiOrigin}`,
+										}
+									: {}
+							}
+							to="/admin/suppliers/products"
+						>
+							{m.catalog_supplier_manage_binding()}
+							<ChevronRight />
+						</Link>
+					</ProButton>
+				) : null}
 			</div>
 			{binding ? (
 				<div className="grid gap-3 rounded-md bg-muted/40 p-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
 					<ReadOnlyDetail
 						label={m.supplier_upstream_details()}
-						value={`${binding.upstreamProductName} · ${binding.upstreamSkuName}`}
+						value={
+							service
+								? binding.upstreamProductName
+								: `${binding.upstreamProductName} · ${binding.upstreamSkuName}`
+						}
 					/>
 					<ReadOnlyDetail
 						label={m.supplier_cost()}
@@ -1330,10 +1343,12 @@ function SupplierFulfillmentPanel({
 							sellableItem.currencyDecimals,
 						)}
 					/>
-					<ReadOnlyDetail
-						label={m.supplier_stock()}
-						value={formatNumber(binding.stockQuantity)}
-					/>
+					{!service ? (
+						<ReadOnlyDetail
+							label={m.supplier_stock()}
+							value={formatNumber(binding.stockQuantity)}
+						/>
+					) : null}
 					<ReadOnlyDetail
 						label={m.common_status()}
 						value={supplierFulfillmentStatusLabel(sellableItem.supplierStatus)}
@@ -1748,7 +1763,7 @@ function newComponent(type: Component["type"]): Component {
 		durationMs: null,
 		usageLimit: null,
 		accessLimit: null,
-		renewalMode: "stack",
+		renewalMode: type === "service" ? "disabled" : "stack",
 		emailMode: "none",
 		showOnOrderPage: true,
 		allowResend: true,
@@ -1989,6 +2004,8 @@ function presetPolicy(
 	return {};
 }
 function entitlementPresetOptions(type: Component["type"]) {
+	if (type === "service")
+		return [{ label: m.catalog_preset_custom(), value: "custom" }];
 	return [
 		{
 			label: m.catalog_preset_permanent_unlimited(),

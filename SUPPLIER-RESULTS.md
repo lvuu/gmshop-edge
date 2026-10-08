@@ -37,11 +37,7 @@ Migration 0007 extends only the delivery record type constraint. Its table
 replacement preserves records, indexes and foreign keys and uses deferred
 foreign keys for D1 compatibility. Earlier migration files are unchanged.
 
-This step enables consuming verified service results. It does not create a
-service product type or inputs, implement Dhru submit/reconcile callbacks,
-enable automatic Dhru purchasing, or deploy to production. The Dhru adapter
-continues to block stock purchasing until service-order plumbing is implemented.
-Integration tests provision a service delivery record explicitly.
+The original result-only boundary has been extended by the service product integration below. Production deployment and real paid acceptance remain separate.
 
 ## 简体中文
 
@@ -59,5 +55,19 @@ delivery_records 的加密内容字段，通过既有 Outbox 触发后续交付�
 显示，可复制，结果内容不进入审计日志。服务访问不消耗卡密权益。
 0007 迁移只扩展交付记录的类型约束，保留已有记录、索引和引用关系。
 
-本阶段未新增 service 商品、动态输入或 Dhru 自动下单；测试显式构造
-service 交付记录。生产部署和真实付费验收尚未进行。
+原先仅扩展结果的边界已由下文的正式服务产品接入取代。生产部署和真实付费验收尚未进行。
+
+
+## Service products / 服务产品
+
+`service` is now a product and immutable order/entitlement type. New service plans use supplier fulfillment and remain unavailable until bound. A service cannot be published or purchased without an enabled binding and an eligible account. Payment writes `awaiting_supply`, a supplier order, and `supplier.requested` atomically; it never allocates stock. Service results are one-time, without quota, expiry, renewal, or direct-content email; email uses the private order link. The result activates the service entitlement and can be revealed from the order or customer library with ownership and refund/revocation checks.
+
+`service` 已成为正式产品类型，并保存到不可变订单和权益快照。新服务规格默认使用供应商履约，绑定前不可销售；发布与购买均检查绑定及可用采购账户。付款原子写入等待供应商的交付记录、采购任务和入队事件，不分配卡密库存。服务结果一次性交付，不设置次数、到期、续费或结果正文邮件；邮件仅发送私有订单链接。成功交付后激活服务权益，可在订单页及客户中心查看，且检查所有权、退款和撤销状态。
+
+POST `/api/admin/suppliers/service-binding` (same-origin authenticated admin, both supplier and product update permissions) or use `bindServiceSupplierFn` with a service plan UUID, configured Dhru account UUID, product ID, product revision, and explicit maximum unit cost in minor units. It fetches only that product and account, stores a single binding, and returns the new draft revision. No bulk catalog synchronization or paid request occurs. Required service fields use existing order-input definitions with the exact upstream field keys; sensitive values are encrypted at checkout and decrypted only by the supplier worker. Automatic field-schema import and a dedicated binding form remain follow-up work.
+
+使用同源登录管理员请求 `POST /api/admin/suppliers/service-binding`（同时要求供应商和产品修改权限），或通过 `bindServiceSupplierFn` 传入服务规格 UUID、已配置的 Dhru 账户 UUID、product_id、产品修订号及以最小货币单位表示的采购成本上限。该接口只读取一个产品和账户，保存单个绑定，并返回新的草稿修订号，不进行全量同步或付费下单。客户字段使用现有订单输入定义，键名与上游一致；敏感值在结算时加密，仅采购执行器读取明文。字段自动导入和独立绑定表单尚待后续开发。
+
+Dhru service availability does not infer inventory from `stock_quantity` or expire the manual binding after 30 minutes. Before POST, the worker fetches a fresh account balance and a product quote and enforces the snapshotted cost cap. A selected account only reconciles thereafter; uncertain submission is never automatically POSTed again. Unsigned Dhru feedback only accelerates an authenticated GET for an already-known order UUID; it cannot deliver, alter the UUID, or supply customer result text. Migration `0008_service_products.sql` preserves the three rebuilt parent tables and their cascading children under D1 foreign-key enforcement.
+
+Dhru 服务可用性不依赖库存数，也不会让手工绑定在 30 分钟后自动失效。采购前实时读取账户余额和单个产品报价，并检查订单保存的成本上限。选定账户后仅查询订单；不确定的提交不会自动再次 POST。未签名回调只能提前查询已知上游订单，不能交付结果、更换订单 UUID 或直接写入结果文本。迁移 `0008_service_products.sql` 在 D1 外键约束下保留重建父表及其级联子表。

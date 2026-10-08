@@ -204,7 +204,8 @@ export const getProductEditorFn = createServerFn({ method: "GET" })
 				productType: String(product.product_type) as
 					| "stock"
 					| "download"
-					| "automation",
+					| "automation"
+					| "service",
 				tagNames: z
 					.array(z.string())
 					.parse(JSON.parse(String(product.tag_names))),
@@ -404,8 +405,8 @@ export const saveProductSellableItemsFn = createServerFn({ method: "POST" })
 						  low_stock_threshold, version, currency, currency_decimals,
 						  list_price_minor, price_minor, cost_minor, minimum_quantity,
 						  maximum_quantity, maximum_per_customer, sort_order, enabled,
-						  created_at, updated_at)
-						 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+						  fulfillment_source, supplier_status, created_at, updated_at)
+						 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 						 ON CONFLICT(id) DO UPDATE SET name = excluded.name,
 						  duration_ms = excluded.duration_ms,
 						  usage_limit = excluded.usage_limit,
@@ -451,6 +452,8 @@ export const saveProductSellableItemsFn = createServerFn({ method: "POST" })
 						item.maximumPerCustomer,
 						(index + 1) * 100,
 						item.enabled ? 1 : 0,
+						item.delivery.type === "service" ? "supplier" : "local",
+						item.delivery.type === "service" ? "unavailable" : null,
 						now,
 						now,
 					),
@@ -591,6 +594,14 @@ export async function checkProduct(context: EditorContext, productId: string) {
 			),
 		);
 	for (const row of rows) {
+		if (row.type === "service" && row.fulfillment_source !== "supplier")
+			blockers.push(
+				issue(
+					"supplier_binding_missing",
+					"Service requires supplier fulfillment",
+					`sellableItem:${String(row.id)}`,
+				),
+			);
 		if (row.fulfillment_source === "supplier") {
 			if (!row.supplier_binding_id)
 				blockers.push(
@@ -826,7 +837,7 @@ function componentChanged(
 function componentResult(row: Row, type: string) {
 	return {
 		id: String(row.id),
-		type: type as "stock" | "download" | "automation",
+		type: type as "stock" | "download" | "automation" | "service",
 		durationMs: nullableNumber(row.duration_ms),
 		usageLimit: nullableNumber(row.usage_limit),
 		accessLimit: nullableNumber(row.access_limit),
@@ -874,7 +885,7 @@ function inferRenewalMode(policy: {
 		: ("disabled" as const);
 }
 function inferEmailMode(policy: {
-	type: "stock" | "download" | "automation";
+	type: "stock" | "download" | "automation" | "service";
 	durationMs: number | null;
 	usageLimit: number | null;
 	accessLimit: number | null;

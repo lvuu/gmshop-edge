@@ -67,6 +67,8 @@ export async function syncSupplierSource(input: {
 	now?: number;
 	fetcher?: typeof fetch;
 }) {
+	if (input.source.provider === "dhru")
+		return { skipped: true, reason: "manual_service_binding" } as const;
 	const now = input.now ?? Date.now();
 	const task = await sourceSyncTaskName(input.source, now, input.full);
 	const completed = await input.db

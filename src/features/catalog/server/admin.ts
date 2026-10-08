@@ -94,7 +94,8 @@ export const listProductsFn = createServerFn({ method: "GET" })
 				productType: String(row.product_type) as
 					| "stock"
 					| "download"
-					| "automation",
+					| "automation"
+					| "service",
 				status: String(row.status) as "draft" | "active" | "trashed",
 				coverObjectKey: row.cover_object_key
 					? String(row.cover_object_key)
@@ -116,7 +117,7 @@ export const listProductsFn = createServerFn({ method: "GET" })
 						? null
 						: String(row.maximum_price_minor),
 				deliveryTypes: z
-					.array(z.enum(["stock", "download", "automation"]))
+					.array(z.enum(["stock", "download", "automation", "service"]))
 					.parse(JSON.parse(String(row.delivery_types))),
 				availableStock: Number(row.available_stock),
 				createdAt: Number(row.created_at),
@@ -168,7 +169,8 @@ export const listProductOptionsFn = createServerFn({ method: "GET" }).handler(
 				deliveryType: String(row.delivery_type) as
 					| "stock"
 					| "download"
-					| "automation",
+					| "automation"
+					| "service",
 			})),
 		};
 	},

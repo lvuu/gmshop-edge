@@ -5,6 +5,7 @@ export const deliveryComponentTypes = [
 	"stock",
 	"download",
 	"automation",
+	"service",
 ] as const;
 
 const id = z.uuid();
@@ -88,6 +89,20 @@ export const productSellableItemsInputSchema = z
 						"Maximum quantity must be greater than or equal to minimum quantity",
 				});
 			const component = item.delivery;
+			if (
+				component.type === "service" &&
+				(component.durationMs != null ||
+					component.usageLimit != null ||
+					component.accessLimit != null ||
+					component.renewalMode !== "disabled" ||
+					component.emailMode === "content")
+			)
+				context.addIssue({
+					code: "custom",
+					path: ["sellableItems", index, "delivery"],
+					message:
+						"Service results require unlimited, non-renewable delivery with link-only email",
+				});
 			if (component.type !== "download" && component.accessLimit != null)
 				context.addIssue({
 					code: "custom",
