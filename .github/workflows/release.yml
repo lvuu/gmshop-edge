@@ -79,6 +79,15 @@ jobs:
           fi
           echo "value=${release_tag}" >>"${GITHUB_OUTPUT}"
 
+  cloudflare:
+    name: Deploy Cloudflare Worker
+    needs: release
+    if: github.repository == 'lvuu/gmshop-edge' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/deploy-cloudflare.yml
+    secrets: inherit
+
   docker:
     name: Publish Docker image
     needs: release

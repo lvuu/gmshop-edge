@@ -24,6 +24,25 @@ GMShop Edge 是可部署到 Cloudflare Workers 或 Bun/Nitro Docker 容器的自
 > GMShop Edge 仍在持续开发。内置适配器表示相应接入路径已经实现；生产使用仍需要部署者
 > 自己的服务商凭证、备份、监控和真实服务商验收测试。
 
+## CSP 与浏览器接管兼容性
+
+Router 在创建时读取请求 nonce，确保 Start 初始化和后续流式脚本使用同一值。
+在渲染回调才设置 nonce 为时已晚，会导致初始化脚本被 CSP 拦截、页面空白。
+`tests/security/router-stream-nonce.test.ts` 验证不同请求和开发请求的 nonce。
+
+锁定的 `@tanstack/react-router@1.170.39` 使用 Bun 持久补丁，移植自
+[TanStack/router#8551](https://github.com/TanStack/router/pull/8551)。Chrome 在
+HTTP 响应头 CSP 下会隐藏 nonce 属性，补丁改为读取 `HTMLScriptElement.nonce`，
+防止接管 SSR 页面时重复插入脚本。补丁覆盖源码、ESM 和 CommonJS，
+`bun install --frozen-lockfile` 自动应用，保留现有 CSP 安全策略。
+`tests/security/router-nonce-hydration.test.tsx` 验证隐藏 nonce 和无 nonce 两种情况，
+检查页面内容及脚本插入；升级上游并通过该测试后才能移除补丁。
+
+Cloudflare 部署在 `main` 的 Release 工作流的检查与发布任务成功后自动执行，检出经过检查的同一提交。
+仍支持手动部署，沿用仓库现有 Cloudflare secrets、资源准备和数据库迁移流程。
+自动和手动部署均在准备远程资源和迁移数据库之前执行完整质量检查。
+Dhru 升级与单服务验收步骤见 [DHRU-SERVICE-INTEGRATION.md](DHRU-SERVICE-INTEGRATION.md)。
+
 ## 核心能力
 
 - 销售预置库存商品，原子分配加密保存的卡密、账号、激活码或凭证。
@@ -219,7 +238,7 @@ docker compose pull
 docker compose up -d
 ```
 
-源码部署需要 Bun 1.3，并使用 `bun run build:bun` 构建、
+源码部署使用 `.bun-version` 固定的 Bun 版本，并使用 `bun run build:bun` 构建、
 `bun run start:bun` 运行。仓库维护的 `bun run data -- …` CLI 提供 `backup`、
 `restore` 和 `import-cloudflare`；恢复和导入只接受全新或空目标，并在安装数据前完成
 完整性校验。

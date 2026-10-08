@@ -27,6 +27,30 @@ fulfillment, and a permission-driven administration console.
 > deployer-owned provider credentials, backups, monitoring, and real-provider
 > acceptance tests.
 
+## CSP hydration compatibility
+
+The router receives the request nonce when it is created, before Start captures
+it for bootstrap and streaming scripts. Setting it in the rendering callback
+is too late and leaves initialization scripts blocked by CSP.
+`tests/security/router-stream-nonce.test.ts` checks the early nonce for separate
+requests and development requests.
+
+The locked `@tanstack/react-router@1.170.39` dependency carries a Bun patch from
+[TanStack/router#8551](https://github.com/TanStack/router/pull/8551). It reads
+`HTMLScriptElement.nonce` when reusing SSR scripts: Chromium hides the nonce
+attribute under an HTTP-header CSP. The patch covers source, ESM and CommonJS;
+`bun install --frozen-lockfile` applies it automatically without relaxing CSP.
+`tests/security/router-nonce-hydration.test.tsx` verifies hydration with a hidden
+nonce and without a nonce, preserving storefront content and preventing script
+insertion. Remove the patch only after an upstream upgrade passes this test.
+
+Cloudflare deployment runs after the `main` Release quality and release job succeeds, checking
+out that exact tested commit. Manual deployment remains available. The existing
+repository Cloudflare secrets, resource preparation and migrations are reused.
+Both automatic and manual deployment run the full quality gate before remote
+resource preparation or migrations. For the Dhru upgrade and single-service
+acceptance steps, see [DHRU-SERVICE-INTEGRATION.md](DHRU-SERVICE-INTEGRATION.md).
+
 ## Core capabilities
 
 - Sell stock products that atomically allocate encrypted preset text such as
@@ -247,7 +271,7 @@ docker compose pull
 docker compose up -d
 ```
 
-For source deployments, use Bun 1.3 with `bun run build:bun` and
+For source deployments, use the Bun version pinned in `.bun-version` with `bun run build:bun` and
 `bun run start:bun`. The maintained `bun run data -- …` CLI provides
 `backup`, `restore`, and `import-cloudflare`; restore and import accept only a
 new or empty target and validate integrity before installing data.

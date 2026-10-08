@@ -79,7 +79,10 @@ describe("supplier API authentication", { timeout: 15_000 }, () => {
 	});
 
 	afterAll(async () => miniflare.dispose());
+
 	beforeEach(async () => {
+		// Freeze only the application clock; Miniflare's I/O timers stay real.
+		// Each case owns its counters and replay receipts independently.
 		vi.spyOn(Date, "now").mockReturnValue(now);
 		nonceSequence = 0;
 		await db.batch([
@@ -89,6 +92,7 @@ describe("supplier API authentication", { timeout: 15_000 }, () => {
 			),
 		]);
 	});
+
 	afterEach(() => vi.restoreAllMocks());
 
 	function signedRequest(
