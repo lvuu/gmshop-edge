@@ -231,6 +231,7 @@ async function processSupplierOrderUnlocked(
 	for (const candidate of candidates) {
 		let submissionStarted = false;
 		let receivedOrderId: string | null = null;
+		let claimedOrder: SupplierOrderContext | null = null;
 		try {
 			return await runTrackedTask(
 				db,
@@ -306,6 +307,16 @@ async function processSupplierOrderUnlocked(
 							"Supplier order was claimed concurrently",
 							{ retryable: true },
 						);
+					// Receipt and fallback writes belong to this claim, even if a later
+					// read observes a different account, credential revision or reference.
+					claimedOrder = {
+						...order,
+						selected_account_id: candidate.id,
+						selected_credentials_revision: candidate.credentials_revision,
+						provider_request_no: requestNo,
+						state: "submitting",
+						updated_at: now,
+					};
 					await db
 						.prepare(
 							`UPDATE supplier_accounts SET balance_minor = ?,
@@ -335,14 +346,7 @@ async function processSupplierOrderUnlocked(
 						"upstreamOrderId" in result ? result.upstreamOrderId : null;
 					return applyPurchaseResult(
 						db,
-						{
-							...order,
-							selected_account_id: candidate.id,
-							selected_credentials_revision: candidate.credentials_revision,
-							provider_request_no: requestNo,
-							state: "submitting",
-							updated_at: now,
-						},
+						claimedOrder,
 						result,
 						runtime.commerceSecret,
 					);
@@ -359,9 +363,10 @@ async function processSupplierOrderUnlocked(
 				if (!["submitting", "uncertain"].includes(current.state)) throw error;
 				if (current.state === "uncertain") throw error;
 				if (submissionStarted || isUncertainError(error)) {
+					if (!claimedOrder) throw error;
 					await markUncertain(
 						db,
-						current,
+						claimedOrder,
 						"supplier_request_uncertain",
 						receivedOrderId,
 					);
@@ -407,31 +412,14 @@ async function applyPurchaseResult(
 	if (result.status === "supplied")
 		return fulfillSupplierOrder(db, order, result, commerceSecret);
 	if (result.status === "processing" || result.status === "uncertain") {
-		const isDhru =
-			parseBindingSnapshot(order.binding_snapshot_json).provider === "dhru";
-		await db
-			.prepare(
-				`UPDATE supplier_orders SET state = 'uncertain',
-				 upstream_order_id = COALESCE(?, upstream_order_id),
-				 account_locked_at = COALESCE(account_locked_at, ?),
-				 next_retry_at = CASE WHEN ? AND COALESCE(?, upstream_order_id) IS NULL
-				  THEN NULL ELSE ? END, last_error_code = ?, updated_at = ?
-				 WHERE id = ? AND selected_account_id IS NOT NULL
-				 AND state IN ('submitting', 'uncertain')`,
-			)
-			.bind(
-				result.upstreamOrderId,
-				Date.now(),
-				isDhru ? 1 : 0,
-				result.upstreamOrderId,
-				Date.now() + 15_000,
-				result.status === "processing"
-					? "supplier_order_processing"
-					: result.errorCode,
-				Date.now(),
-				order.id,
-			)
-			.run();
+		await markUncertain(
+			db,
+			order,
+			result.status === "processing"
+				? "supplier_order_processing"
+				: result.errorCode,
+			result.upstreamOrderId,
+		);
 		throw new DomainError(
 			"supplier_order_pending",
 			503,
@@ -798,18 +786,33 @@ async function markUncertain(
 	code: string,
 	upstreamOrderId: string | null = null,
 ) {
-	const now = Date.now();
+	if (
+		order.upstream_order_id !== null &&
+		upstreamOrderId !== null &&
+		order.upstream_order_id !== upstreamOrderId
+	)
+		throw new DomainError(
+			"supplier_order_changed",
+			409,
+			"Supplier result does not match the accepted purchase",
+			{ retryable: true },
+		);
+	const now = Math.max(Date.now(), order.updated_at + 1);
 	const isDhru =
 		parseBindingSnapshot(order.binding_snapshot_json).provider === "dhru";
-	await db
+	const changed = await db
 		.prepare(
-			`UPDATE supplier_orders SET state = 'uncertain',
+			`UPDATE supplier_orders AS so SET state = 'uncertain',
 			 upstream_order_id = COALESCE(upstream_order_id, ?),
 			 account_locked_at = COALESCE(account_locked_at, ?),
 			 next_retry_at = CASE WHEN ? AND COALESCE(upstream_order_id, ?) IS NULL
 			  THEN NULL ELSE ? END, last_error_code = ?, updated_at = ?
-			 WHERE id = ? AND selected_account_id = ?
-			 AND state IN ('submitting', 'uncertain')`,
+			 WHERE so.id = ? AND so.state = ? AND so.updated_at = ?
+			 AND so.state IN ('submitting', 'uncertain') AND so.selected_account_id IS NOT NULL
+			 AND so.selected_account_id IS ? AND so.selected_credentials_revision IS ?
+			 AND so.account_locked_at IS ? AND so.provider_request_no IS ? AND so.upstream_order_id IS ?
+			 AND EXISTS (SELECT 1 FROM shop_orders o WHERE o.id = so.order_id
+			  AND o.status IN ('paid', 'fulfilling'))`,
 		)
 		.bind(
 			upstreamOrderId,
@@ -820,9 +823,22 @@ async function markUncertain(
 			code,
 			now,
 			order.id,
+			order.state,
+			order.updated_at,
 			order.selected_account_id,
+			order.selected_credentials_revision,
+			order.account_locked_at,
+			order.provider_request_no,
+			order.upstream_order_id,
 		)
 		.run();
+	if (changed.meta.changes !== 1)
+		throw new DomainError(
+			"supplier_order_changed",
+			409,
+			"Supplier order changed during reconciliation",
+			{ retryable: true },
+		);
 }
 
 function loadOrder(db: D1Database, id: string) {

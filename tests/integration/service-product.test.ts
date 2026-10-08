@@ -1433,6 +1433,363 @@ describe("service products", { timeout: 30_000 }, () => {
 		expect(posts).toBe(1);
 	});
 
+	it.each(["processing", "uncertain"])(
+		"preserves a changed purchase instead of saving a stale %s GET",
+		async (outcome) => {
+			const changes = [
+				"upstream_order_id = 'NEW'",
+				"selected_credentials_revision = 2",
+				"account_locked_at = account_locked_at + 1",
+				"provider_request_no = 'NEW'",
+				"updated_at = updated_at + 1",
+				"state = 'failed', next_retry_at = NULL",
+				"refund",
+				"cancel",
+				"complete",
+			];
+			for (const change of changes) {
+				const { order, supplier } = await pollingSupplier();
+				let expected: unknown;
+				const racingDb = {
+					prepare: (sql: string) => {
+						const statement = db.prepare(sql);
+						if (!sql.includes("SET state = 'uncertain'")) return statement;
+						return {
+							bind: (...values: unknown[]) => {
+								const bound = statement.bind(...values);
+								return {
+									run: async () => {
+										if (change === "complete")
+											await completeSupplierOrderFromCallback(db, supplier.id, {
+												status: "supplied",
+												upstreamOrderId: "D1",
+												fulfillment: {
+													type: "service",
+													resultText: "Winning result",
+												},
+											});
+										else if (change === "refund" || change === "cancel")
+											await db
+												.prepare(
+													"UPDATE shop_orders SET status = ? WHERE id = ?",
+												)
+												.bind(
+													change === "refund" ? "refunded" : "cancelled",
+													order.id,
+												)
+												.run();
+										else
+											await db
+												.prepare(
+													`UPDATE supplier_orders SET ${change} WHERE id = ?`,
+												)
+												.bind(supplier.id)
+												.run();
+										expected = await db
+											.prepare("SELECT * FROM supplier_orders WHERE id = ?")
+											.bind(supplier.id)
+											.first();
+										return bound.run();
+									},
+								};
+							},
+						} as D1PreparedStatement;
+					},
+					batch: db.batch.bind(db),
+				} as D1Database;
+				const pendingRead: typeof fetch = async (input, init) => {
+					if (new URL(String(input)).pathname.endsWith("/order")) {
+						if (outcome === "uncertain")
+							throw new Error("Private provider detail");
+						return Response.json({
+							status: "success",
+							code: 200,
+							data: { quantity: 1, status: "in-process", replay: "" },
+						});
+					}
+					return fetcher(input, init);
+				};
+				await expect(
+					processSupplierOrder(racingDb, supplier.id, { fetcher: pendingRead }),
+					change,
+				).rejects.toMatchObject({
+					code: "supplier_order_changed",
+					retryable: true,
+				});
+				expect(
+					await db
+						.prepare("SELECT * FROM supplier_orders WHERE id = ?")
+						.bind(supplier.id)
+						.first(),
+					change,
+				).toEqual(expected);
+				expect(
+					await db
+						.prepare(
+							"SELECT COUNT(*) AS n FROM outbox_events WHERE aggregate_id = ? AND event_type = 'delivery.requested'",
+						)
+						.bind(supplier.delivery_record_id)
+						.first("n"),
+					change,
+				).toBe(change === "complete" ? 1 : 0);
+			}
+			expect(posts).toBe(changes.length);
+		},
+	);
+
+	it("does not attach a POST receipt to a changed claim during primary or fallback persistence", async () => {
+		for (const change of [
+			"selected_credentials_revision = 2",
+			"provider_request_no = 'NEW'",
+			"updated_at = updated_at + 1",
+		]) {
+			const order = await checkout();
+			await pay(order.id);
+			const supplier = await db
+				.prepare("SELECT id FROM supplier_orders WHERE order_id = ?")
+				.bind(order.id)
+				.first<{ id: string }>();
+			if (!supplier) throw new Error("missing supplier");
+			let writes = 0;
+			let expected: unknown;
+			const racingDb = {
+				prepare: (sql: string) => {
+					const statement = db.prepare(sql);
+					if (!sql.includes("SET state = 'uncertain'")) return statement;
+					return {
+						bind: (...values: unknown[]) => {
+							const bound = statement.bind(...values);
+							return {
+								run: async () => {
+									if (++writes === 1) {
+										await db
+											.prepare(
+												`UPDATE supplier_orders SET ${change} WHERE id = ?`,
+											)
+											.bind(supplier.id)
+											.run();
+										expected = await db
+											.prepare("SELECT * FROM supplier_orders WHERE id = ?")
+											.bind(supplier.id)
+											.first();
+									}
+									return bound.run();
+								},
+							};
+						},
+					} as D1PreparedStatement;
+				},
+				batch: db.batch.bind(db),
+			} as D1Database;
+			await expect(
+				processSupplierOrder(racingDb, supplier.id, { fetcher }),
+			).rejects.toMatchObject({
+				code: "supplier_order_changed",
+				retryable: true,
+			});
+			expect(writes).toBe(2);
+			expect(
+				await db
+					.prepare("SELECT * FROM supplier_orders WHERE id = ?")
+					.bind(supplier.id)
+					.first(),
+			).toEqual(expected);
+			let requests = 0;
+			await expect(
+				processSupplierOrder(db, supplier.id, {
+					fetcher: async (...args) => {
+						requests++;
+						return fetcher(...args);
+					},
+				}),
+			).rejects.toMatchObject({ code: "supplier_order_pending" });
+			expect(requests).toBe(0);
+			expect(
+				await db
+					.prepare(
+						"SELECT state, upstream_order_id, next_retry_at FROM supplier_orders WHERE id = ?",
+					)
+					.bind(supplier.id)
+					.first(),
+			).toMatchObject({
+				state: "uncertain",
+				upstream_order_id: null,
+				next_retry_at: null,
+			});
+		}
+		expect(posts).toBe(3);
+	});
+
+	it("preserves newer state when the fallback write races after receipt storage fails", async () => {
+		for (const change of [
+			"updated_at = updated_at + 1",
+			"upstream_order_id = 'NEW'",
+			"refund",
+		]) {
+			const order = await checkout();
+			await pay(order.id);
+			const supplier = await db
+				.prepare("SELECT id FROM supplier_orders WHERE order_id = ?")
+				.bind(order.id)
+				.first<{ id: string }>();
+			if (!supplier) throw new Error("missing supplier");
+			await db
+				.prepare(`CREATE TRIGGER fail_primary_receipt BEFORE UPDATE ON supplier_orders
+			 WHEN NEW.last_error_code = 'supplier_order_processing'
+			 BEGIN SELECT RAISE(ABORT, 'receipt unavailable'); END`)
+				.run();
+			let writes = 0;
+			let expected: unknown;
+			const racingDb = {
+				prepare: (sql: string) => {
+					const statement = db.prepare(sql);
+					if (!sql.includes("SET state = 'uncertain'")) return statement;
+					return {
+						bind: (...values: unknown[]) => {
+							const bound = statement.bind(...values);
+							return {
+								run: async () => {
+									if (++writes === 2) {
+										if (change === "refund")
+											await db
+												.prepare(
+													"UPDATE shop_orders SET status = 'refunded' WHERE id = ?",
+												)
+												.bind(order.id)
+												.run();
+										else
+											await db
+												.prepare(
+													`UPDATE supplier_orders SET ${change} WHERE id = ?`,
+												)
+												.bind(supplier.id)
+												.run();
+										expected = await db
+											.prepare("SELECT * FROM supplier_orders WHERE id = ?")
+											.bind(supplier.id)
+											.first();
+									}
+									return bound.run();
+								},
+							};
+						},
+					} as D1PreparedStatement;
+				},
+				batch: db.batch.bind(db),
+			} as D1Database;
+			await expect(
+				processSupplierOrder(racingDb, supplier.id, { fetcher }),
+			).rejects.toMatchObject({
+				code: "supplier_order_changed",
+				retryable: true,
+			});
+			expect(writes).toBe(2);
+			expect(
+				await db
+					.prepare("SELECT * FROM supplier_orders WHERE id = ?")
+					.bind(supplier.id)
+					.first(),
+			).toEqual(expected);
+			await db.prepare("DROP TRIGGER fail_primary_receipt").run();
+		}
+		expect(posts).toBe(3);
+	});
+
+	it("retries a queue reconciliation conflict and later delivers by GET using indexed writes", async () => {
+		const { order, supplier } = await pollingSupplier();
+		let updateSql = "";
+		let bindings: unknown[] = [];
+		const racingDb = {
+			prepare: (sql: string) => {
+				const statement = db.prepare(sql);
+				if (!sql.includes("SET state = 'uncertain'")) return statement;
+				updateSql = sql;
+				return {
+					bind: (...values: unknown[]) => {
+						bindings = values;
+						const bound = statement.bind(...values);
+						return {
+							run: async () => {
+								await db
+									.prepare(
+										"UPDATE supplier_orders SET updated_at = updated_at + 1 WHERE id = ?",
+									)
+									.bind(supplier.id)
+									.run();
+								return bound.run();
+							},
+						};
+					},
+				} as D1PreparedStatement;
+			},
+			batch: db.batch.bind(db),
+		} as D1Database;
+		vi.stubGlobal(
+			"fetch",
+			async (input: RequestInfo | URL, init?: RequestInit) => {
+				if (new URL(String(input)).pathname.endsWith("/order"))
+					return Response.json({
+						status: "success",
+						code: 200,
+						data: { quantity: 1, status: "pending", replay: "" },
+					});
+				return fetcher(input, init);
+			},
+		);
+		const body: SupplierQueueMessage = {
+			kind: "commerce.supplier",
+			version: 1,
+			supplierOrderId: supplier.id,
+		};
+		const ack = vi.fn(),
+			retry = vi.fn();
+		const batch = {
+			queue: "commerce",
+			messages: [
+				{
+					body,
+					ack,
+					retry,
+					id: crypto.randomUUID(),
+					timestamp: new Date(),
+					attempts: 1,
+				},
+			],
+		} as unknown as MessageBatch<SupplierQueueMessage>;
+		await handleQueue(batch, { DB: racingDb } as unknown as Env);
+		expect(retry).toHaveBeenCalledTimes(1);
+		expect(ack).not.toHaveBeenCalled();
+		expect(
+			await db
+				.prepare(
+					"SELECT COUNT(*) AS n FROM audit_logs WHERE action = 'queue.message_failed'",
+				)
+				.first("n"),
+		).toBe(0);
+		const plan = await db
+			.prepare(`EXPLAIN QUERY PLAN ${updateSql}`)
+			.bind(...bindings)
+			.all<{ detail: string }>();
+		const detail = plan.results.map((row) => row.detail).join("\n");
+		for (const alias of ["so", "o"]) {
+			expect(detail).toMatch(new RegExp(`SEARCH ${alias} USING INDEX`));
+			expect(detail).not.toMatch(new RegExp(`SCAN ${alias}\\b`));
+		}
+		vi.stubGlobal("fetch", fetcher);
+		await handleQueue(batch, { DB: db } as unknown as Env);
+		expect(ack).toHaveBeenCalledTimes(1);
+		expect(retry).toHaveBeenCalledTimes(1);
+		await processDelivery(db, supplier.delivery_record_id);
+		await expect(
+			revealStoreDelivery(db, {
+				orderNumber: order.orderNumber,
+				email: "buyer@example.com",
+				deliveryId: supplier.delivery_record_id,
+			}),
+		).resolves.toMatchObject({ content: "Status: Clean" });
+		expect(posts).toBe(1);
+	});
+
 	const adminAudit = () => ({
 		request: new Request("https://shop.example/admin/suppliers/orders"),
 		actorUserId: accountId,

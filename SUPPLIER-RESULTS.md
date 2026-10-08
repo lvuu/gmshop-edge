@@ -239,3 +239,21 @@ Integration evidence covers identity/version changes during a successful GET, co
 Service-commit validation: 760 unit/security, 314 integration and 23 Bun runtime tests passed (1,097 total). Two existing TODO tests remain unexecuted and the manual provider smoke file is skipped. Typecheck, Biome and Workers/Bun builds passed, retaining existing unrelated Biome notices.
 
 服务结果写入验证：760 项单元及安全测试、314 项集成测试、23 项 Bun 运行时测试通过，共 1,097 项。原有两项 TODO 未执行，真实供应商手工测试文件跳过。类型检查、Biome 及 Workers/Bun 构建通过，保留已有无关 Biome 提示。
+
+## Pending purchase persistence / 待处理采购写入
+
+Processing replies, uncertain reads, missing-ID holds and receipt-write fallbacks now use the same guarded update. Before changing state, retry time or error code, it rechecks the purchase state/version, selected account, credential revision, lock, request reference, stored upstream ID and paid/fulfilling parent. A known upstream ID is preserved; a conflicting result cannot replace it. A lost update returns the existing fixed, retryable supplier_order_changed error rather than reporting that a poll was saved.
+
+处理中回复、查询不确定、缺少订单号的人工核查，以及回执保存失败后的兜底处理，现在统一使用带身份检查的更新。在改变状态、重试时间或错误代码前，会再次核对采购状态及版本、已选账号、凭据版本、锁定、请求引用、已存上游订单号，以及客户订单已支付或正在交付状态。已知订单号会保留，不匹配的结果不能替换它。竞争失败会返回现有固定且可重试的 supplier_order_changed 错误，不会声称已保存轮询计划。
+
+The first POST retains its original claimed purchase context for both receipt and fallback persistence. Rereading a changed row cannot authorize attaching an old receipt to a new credential revision or request reference. Normal pending replies are acknowledged only after their update succeeds; a queue conflict retries and can later deliver through the existing authenticated GET. Unknown Dhru receipts remain manual holds without another GET/POST. Successful service results, terminal rejection and stock delivery keep their separate delivery paths.
+
+首次 POST 会保留原采购占用记录，用于回执及兜底写入。重新读取变更后的记录，不能授权将旧回执绑定到新的凭据版本或请求引用。只有更新成功后才确认正常待处理消息；队列遇到竞争会重试，之后可通过现有认证 GET 完成交付。未知 Dhru 回执仍进入人工核查，不再次 GET 或 POST。服务成功结果、最终拒单及卡密交付继续使用各自的交付流程。
+
+Integration checks cover processing/read-failure races, newer completion and rejection, parent refund/cancellation, changed primary receipt claims, a failed D1 receipt write followed by a competing fallback, real queue retry/ack behavior and the actual pending-update query plan. Existing receipt-failure recovery is retained. No migration, deployment or live purchase is performed; browser acceptance and the approximately $1 provider smoke remain pending.
+
+集成检查覆盖处理中及读取失败的竞争、新完成或拒单、客户订单退款或取消、主回执占用记录变更、D1 回执写入失败后的兜底竞争、真实队列重试及确认行为，以及实际待处理更新查询的索引计划。原回执失败恢复行为保留。本轮不增加迁移、不部署或执行真实采购；浏览器验收及约 $1 的供应商真实测试仍待完成。
+
+Pending-persistence validation: 760 unit/security, 319 integration and 23 Bun runtime tests passed (1,102 total). Two existing TODO tests remain unexecuted and the manual provider smoke file is skipped. Typecheck, Biome and Workers/Bun builds passed, retaining existing unrelated Biome notices.
+
+待处理采购写入验证：760 项单元及安全测试、319 项集成测试、23 项 Bun 运行时测试通过，共 1,102 项。原有两项 TODO 未执行，真实供应商手工测试文件跳过。类型检查、Biome 及 Workers/Bun 构建通过，保留已有无关 Biome 提示。
