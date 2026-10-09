@@ -7,6 +7,7 @@ ENV CI=true
 WORKDIR /app
 
 COPY --link package.json bun.lock ./
+COPY --link patches/ ./patches/
 RUN --mount=type=cache,target=/root/.bun/install/cache,sharing=locked \
     bun install --frozen-lockfile --ignore-scripts
 

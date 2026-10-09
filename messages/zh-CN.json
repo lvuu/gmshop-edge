@@ -1379,7 +1379,7 @@
 	"supplier_api_origin_description": "仅填写 HTTPS 根地址，不包含 API 路径、查询参数或片段。",
 	"supplier_currency_decimals_description": "上游货币使用的小数位数。",
 	"supplier_credentials_section_description": "凭据会加密保存，提交后不会再次显示。",
-	"supplier_credentials_keep_existing": "两个字段均留空表示保留现有凭据；同时填写则轮换凭据。",
+	"supplier_credentials_keep_existing": "将当前显示的凭据字段留空可保留原凭据；填写后会轮换凭据。",
 	"supplier_credentials_required_description": "创建账号时必须填写，用于保存前验证账号。",
 	"supplier_minor_unit_description": "请输入最小货币单位整数；例如 CNY 为 2 位小数时，100 表示 ¥1.00。",
 	"supplier_max_order_cost_description": "可选；留空表示不限制单笔采购金额，单位为最小货币单位。",
@@ -1681,5 +1681,16 @@
 	"supplier_order_manual_review": "需人工核查",
 	"supplier_order_manual_review_description": "未保存上游订单号。请用采购参考编号在供应商账号中核查现有采购记录，勿再次采购。",
 	"supplier_action_order_id_missing": "此 Dhru 采购缺少上游订单号，暂无法核验。请先向供应商核实现有采购，勿重复下单。",
-	"supplier_purchase_reference": "采购参考编号"
+	"supplier_purchase_reference": "采购参考编号",
+	"supplier_account_error_invalid_source": "请填写供应商 HTTPS 根地址，例如 https://supplier.example，不要填写 API 路径、查询参数或片段。",
+	"supplier_account_error_currency": "币种与小数位必须匹配供应商钱包，以及同一 API 来源下的其他账号。",
+	"supplier_account_error_money": "供应商余额的小数精度不匹配，请检查钱包小数位设置。",
+	"supplier_account_error_input": "请检查必填项、凭据格式、三位币种代码及整数最小货币单位金额。",
+	"supplier_account_error_connection": "无法验证供应商账号，请检查 HTTPS 根地址、Token、API 权限及 IP 白名单后重试。",
+	"supplier_account_error_conflict": "同一 API 来源下已有相同名称或凭据的账号。",
+	"supplier_account_error_unavailable": "供应商加密配置不可用，请联系管理员检查商店配置。",
+	"supplier_account_error_not_found": "供应商账号已不存在，请刷新列表。",
+	"supplier_account_error_source_immutable": "已有账号不能更换平台或 API 来源，请创建另一个账号。",
+	"supplier_account_error_pool_limit": "此 API 来源已有 20 个启用账号，请先停用一个再启用新账号。",
+	"supplier_account_error_access": "登录会话或供应商管理权限不可用，请重新登录或联系管理员。"
 }
