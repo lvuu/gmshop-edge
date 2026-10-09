@@ -8,6 +8,15 @@ credentials. A formal `service` product uses a manually reviewed binding to one
 upstream service; it never allocates stock. Existing stock, download and automation
 products keep their delivery paths. Full Dhru catalog synchronization is deferred.
 
+Adding an account or rotating its token verifies `getAccount()` and stores its
+wallet balance; it does not call the stock catalog API. Enter the HTTPS origin
+only (without `/api/reseller/v1`), a token and the wallet's currency/decimal places.
+Leave the token blank when editing to retain existing credentials and health.
+Account errors use localized, reviewed codes rather than upstream messages or
+tokens. Real-D1 regression tests cover creation, credential rotation, unchanged
+credentials, enable/disable, currency rejection, duplicate rollback and audit
+redaction. SQL binds numeric enabled flags and scalar connection markers.
+
 The product editor previews one service, its exact price and supported input
 fields. Binding refetches the service and checks the reviewed fingerprint before
 saving a new immutable input-definition version. Checkout validates those fields
@@ -71,6 +80,13 @@ Client contract: [DHRU-CLIENT.md](DHRU-CLIENT.md).
 五个 Dhru Client 方法、加密版本化账户凭据、正式 `service` 商品、单服务手工
 绑定、动态输入验证与加密快照、付款后采购队列及客户私有结果均已接通。
 卡密、下载和自动化保留原履约流程，全量目录同步继续延后。
+
+新增账号或轮换 Token 时，只调用 `getAccount()` 验证并保存钱包余额，不调用
+卡密目录接口。地址仅填写 HTTPS 根地址，不带 `/api/reseller/v1`；同时填写
+Token 及钱包对应币种和小数位。编辑时 Token 留空会保留原凭据及健康状态。
+账号错误按经过审核的错误码显示中英文提示，不显示上游原始消息或 Token。
+真实 D1 回归测试覆盖新增、轮换、保留凭据、启停、币种拒绝、重复回滚及审计
+脱敏；SQL 使用数字启用标记和标量连接标记。
 
 后台先预览一个服务的名称、价格和支持的字段；绑定时重新读取并比较指纹，
 成功后保存新的不可变字段版本。付款确认原子写入采购任务和入队事件。

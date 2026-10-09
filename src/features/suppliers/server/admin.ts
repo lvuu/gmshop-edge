@@ -191,7 +191,8 @@ export const saveSupplierAccountFn = createServerFn({ method: "POST" })
 		if (!before || data.credentials !== undefined) {
 			const adapter = await adapterForSupplierAccount(testRow, context.runtime);
 			connection = await adapter.testConnection();
-			await adapter.listProducts({ page: 1, pageSize: 1 });
+			if (source.provider !== "dhru")
+				await adapter.listProducts({ page: 1, pageSize: 1 });
 		}
 
 		const statement = before
@@ -220,13 +221,13 @@ export const saveSupplierAccountFn = createServerFn({ method: "POST" })
 						data.lowBalanceMinor,
 						data.maxOrderCostMinor,
 						connection?.balance.amountMinor ?? null,
-						connection,
+						connection ? 1 : null,
 						now,
-						connection,
-						connection,
-						connection,
-						connection,
-						data.enabled,
+						connection ? 1 : null,
+						connection ? 1 : null,
+						connection ? 1 : null,
+						connection ? 1 : null,
+						data.enabled ? 1 : 0,
 						now,
 						id,
 					)
@@ -257,7 +258,7 @@ export const saveSupplierAccountFn = createServerFn({ method: "POST" })
 						data.reserveBalanceMinor,
 						data.lowBalanceMinor,
 						data.maxOrderCostMinor,
-						data.enabled,
+						data.enabled ? 1 : 0,
 						now,
 						now,
 					);
@@ -459,7 +460,7 @@ export const setSupplierAccountEnabledFn = createServerFn({ method: "POST" })
 				.prepare(
 					"UPDATE supplier_accounts SET enabled = ?, updated_at = ? WHERE id = ?",
 				)
-				.bind(data.enabled, now, data.id),
+				.bind(data.enabled ? 1 : 0, now, data.id),
 			createAuditStatement(
 				context.db,
 				context.request,

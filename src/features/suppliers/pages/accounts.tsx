@@ -26,6 +26,7 @@ import { PageHeader } from "#/layouts/components/page-header";
 import { formatDateTime, formatMinorAmount } from "#/lib/format";
 import { useCurrentProTableUrlState } from "#/lib/pro-table-url-state";
 import { m } from "#/paraglide/messages";
+import { supplierAccountErrorMessage } from "../error-label";
 import { supplierProviderLabel } from "../provider-label";
 import { supplierProviderSchema } from "../schema";
 import {
@@ -502,6 +503,6 @@ function healthLabel(status: Account["healthStatus"]) {
 	return m.supplier_status_unknown();
 }
 
-function showError() {
-	toast.error(m.common_operation_failed());
+function showError(error: unknown) {
+	toast.error(supplierAccountErrorMessage(error));
 }

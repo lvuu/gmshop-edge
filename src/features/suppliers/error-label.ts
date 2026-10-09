@@ -1,5 +1,41 @@
 import { m } from "#/paraglide/messages";
 
+export function supplierAccountErrorMessage(error: unknown) {
+	const code =
+		error && typeof error === "object" && "code" in error ? error.code : null;
+	switch (code) {
+		case "invalid_supplier_source_url":
+			return m.supplier_account_error_invalid_source();
+		case "supplier_currency_mismatch":
+		case "supplier_source_currency_mismatch":
+			return m.supplier_account_error_currency();
+		case "invalid_supplier_money":
+			return m.supplier_account_error_money();
+		case "supplier_credentials_required":
+		case "invalid_input":
+			return m.supplier_account_error_input();
+		case "supplier_connection_failed":
+		case "dhru_read_failed":
+		case "supplier_request_failed":
+			return m.supplier_account_error_connection();
+		case "supplier_account_conflict":
+			return m.supplier_account_error_conflict();
+		case "supplier_configuration_unavailable":
+			return m.supplier_account_error_unavailable();
+		case "supplier_account_not_found":
+			return m.supplier_account_error_not_found();
+		case "supplier_source_immutable":
+			return m.supplier_account_error_source_immutable();
+		case "supplier_account_pool_limit":
+			return m.supplier_account_error_pool_limit();
+		case "unauthorized":
+		case "forbidden":
+			return m.supplier_account_error_access();
+		default:
+			return m.common_operation_failed();
+	}
+}
+
 export function supplierOrderActionErrorMessage(error: unknown) {
 	const code =
 		error && typeof error === "object" && "code" in error ? error.code : null;

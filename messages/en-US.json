@@ -1379,7 +1379,7 @@
 	"supplier_api_origin_description": "HTTPS root URL only, without an API path, query, or fragment.",
 	"supplier_currency_decimals_description": "Number of decimal places used by the upstream currency.",
 	"supplier_credentials_section_description": "Credentials are encrypted and are never shown again after saving.",
-	"supplier_credentials_keep_existing": "Leave both fields empty to keep the current credentials. Fill both to rotate them.",
+	"supplier_credentials_keep_existing": "Leave the displayed credential fields empty to keep existing credentials; fill them to rotate.",
 	"supplier_credentials_required_description": "Required to verify the account before it can be saved.",
 	"supplier_minor_unit_description": "Enter an integer in the smallest currency unit; for CNY with 2 decimals, 100 means ¥1.00.",
 	"supplier_max_order_cost_description": "Optional. Leave empty for no per-order cap. Uses the smallest currency unit.",
@@ -1681,5 +1681,16 @@
 	"supplier_order_manual_review": "Needs manual review",
 	"supplier_order_manual_review_description": "No upstream order ID was saved. Verify the existing purchase in the supplier account using its purchase reference; do not purchase again.",
 	"supplier_action_order_id_missing": "This Dhru purchase has no upstream order ID to reconcile. Verify the existing purchase with the supplier; do not submit it again.",
-	"supplier_purchase_reference": "Purchase reference"
+	"supplier_purchase_reference": "Purchase reference",
+	"supplier_account_error_invalid_source": "Use the supplier HTTPS origin only, such as https://supplier.example, without an API path, query or fragment.",
+	"supplier_account_error_currency": "The currency and decimal places must match the supplier wallet and other accounts at this API origin.",
+	"supplier_account_error_money": "The supplier balance has unsupported precision. Check the wallet decimal places.",
+	"supplier_account_error_input": "Check the required fields, credential format, three-letter currency and integer minor-unit limits.",
+	"supplier_account_error_connection": "Could not verify the supplier account. Check its HTTPS origin, token, API access and IP allowlist, then retry.",
+	"supplier_account_error_conflict": "An account with this name or credential already exists at this API origin.",
+	"supplier_account_error_unavailable": "Supplier encryption configuration is unavailable. Ask an administrator to check the store configuration.",
+	"supplier_account_error_not_found": "This supplier account no longer exists. Refresh the list.",
+	"supplier_account_error_source_immutable": "An existing account cannot change its provider or API origin. Create a separate account.",
+	"supplier_account_error_pool_limit": "This API origin already has 20 enabled accounts. Disable one before enabling another.",
+	"supplier_account_error_access": "Your session or supplier-management permission is unavailable. Sign in again or ask an administrator."
 }
