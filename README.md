@@ -479,6 +479,10 @@ instance. Its machine-readable source is [OpenAPI YAML](public/openapi.yaml).
   acknowledged with a `queue.message_failed` audit entry instead of being
   dead-lettered.
 
+Supplier service preview and binding implementations are explicitly server-only.
+Both production builds reject browser imports of `node:async_hooks` / `async_hooks`,
+so server request context cannot silently enter the product editor bundle.
+
 ## License
 
 GMShop Edge is licensed under [GPL-3.0-or-later](LICENSE).

@@ -19,6 +19,10 @@ const config = defineConfig({
 		}),
 		tailwindcss(),
 		tanstackStart({
+			importProtection: {
+				behavior: "error",
+				client: { specifiers: ["node:async_hooks", "async_hooks"] },
+			},
 			start: { entry: "start.ts" },
 			server: { entry: "server-entry.ts" },
 		}),

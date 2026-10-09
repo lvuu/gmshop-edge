@@ -8,6 +8,7 @@ import { getAdminRuntimeServerContext } from "#/server/context";
 
 vi.mock("#/server/context", () => ({ getAdminRuntimeServerContext: vi.fn() }));
 vi.mock("@tanstack/react-start", () => ({
+	createServerOnlyFn: <T>(handler: T) => handler,
 	createServerFn: () => ({
 		validator() {
 			return this;

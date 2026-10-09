@@ -1,4 +1,4 @@
-import { createServerFn } from "@tanstack/react-start";
+import { createServerFn, createServerOnlyFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { systemPermission } from "#/features/access/system-rbac";
 import { DomainError } from "#/lib/domain-error";
@@ -50,32 +50,34 @@ export const previewServiceSupplierFn = createServerFn({ method: "POST" })
 		return previewServiceSupplier(context.db, data);
 	});
 
-export async function previewServiceSupplier(
-	db: D1Database,
-	raw: unknown,
-	options: { fetcher?: typeof fetch } = {},
-) {
-	const { quote, target, fingerprint } = await loadServiceBinding(
-		db,
-		raw,
-		options,
-	);
-	return {
-		name: quote.name,
-		costMinor: quote.costMinor,
-		currency: target.currency,
-		currencyDecimals: target.currency_decimals,
-		fingerprint,
-		fields: quote.definitions.map(
-			({ key, required, sensitive, validationPattern }) => ({
-				key,
-				required,
-				sensitive,
-				validationPattern,
-			}),
-		),
-	};
-}
+export const previewServiceSupplier = createServerOnlyFn(
+	async (
+		db: D1Database,
+		raw: unknown,
+		options: { fetcher?: typeof fetch } = {},
+	) => {
+		const { quote, target, fingerprint } = await loadServiceBinding(
+			db,
+			raw,
+			options,
+		);
+		return {
+			name: quote.name,
+			costMinor: quote.costMinor,
+			currency: target.currency,
+			currencyDecimals: target.currency_decimals,
+			fingerprint,
+			fields: quote.definitions.map(
+				({ key, required, sensitive, validationPattern }) => ({
+					key,
+					required,
+					sensitive,
+					validationPattern,
+				}),
+			),
+		};
+	},
+);
 
 export const listServiceBindingAccountsFn = createServerFn({
 	method: "GET",
@@ -98,129 +100,135 @@ export const listServiceBindingAccountsFn = createServerFn({
 });
 
 /** One explicit service binding; never imports the supplier catalog or submits an order. */
-export async function bindServiceSupplier(
-	db: D1Database,
-	raw: unknown,
-	options: { actorUserId: string; fetcher?: typeof fetch },
-) {
-	const { data, target, account, connection, quote, fingerprint } =
-		await loadServiceBinding(db, raw, options);
-	if (
-		data.expectedServiceFingerprint &&
-		data.expectedServiceFingerprint !== fingerprint
-	)
-		throw new DomainError(
-			"supplier_service_preview_changed",
-			409,
-			"Service changed; preview again before binding",
-		);
-	const now = Date.now(),
-		token = crypto.randomUUID(),
-		id = crypto.randomUUID();
-	const guard =
-		"EXISTS (SELECT 1 FROM products WHERE id = ? AND revision_token = ?)";
-	const results = await db.batch([
-		db
-			.prepare(
-				"UPDATE products SET status = 'draft', revision = revision + 1, revision_token = ?, updated_at = ? WHERE id = ? AND revision = ? AND NOT EXISTS (SELECT 1 FROM shop_order_items item JOIN shop_orders orders ON orders.id = item.order_id WHERE item.sellable_item_id = ? AND orders.status = 'pending_payment')",
-			)
-			.bind(
-				token,
-				now,
-				target.product_id,
-				data.expectedRevision,
-				data.sellableItemId,
-			),
-		db
-			.prepare(
-				`UPDATE supplier_bindings SET enabled = 0, updated_at = ? WHERE sellable_item_id = ? AND enabled = 1 AND ${guard}`,
-			)
-			.bind(now, data.sellableItemId, target.product_id, token),
-		db
-			.prepare(`INSERT INTO supplier_bindings (id, sellable_item_id, provider, normalized_api_origin, protocol_version,
+export const bindServiceSupplier = createServerOnlyFn(
+	async (
+		db: D1Database,
+		raw: unknown,
+		options: { actorUserId: string; fetcher?: typeof fetch },
+	) => {
+		const { data, target, account, connection, quote, fingerprint } =
+			await loadServiceBinding(db, raw, options);
+		if (
+			data.expectedServiceFingerprint &&
+			data.expectedServiceFingerprint !== fingerprint
+		)
+			throw new DomainError(
+				"supplier_service_preview_changed",
+				409,
+				"Service changed; preview again before binding",
+			);
+		const now = Date.now(),
+			token = crypto.randomUUID(),
+			id = crypto.randomUUID();
+		const guard =
+			"EXISTS (SELECT 1 FROM products WHERE id = ? AND revision_token = ?)";
+		const results = await db.batch([
+			db
+				.prepare(
+					"UPDATE products SET status = 'draft', revision = revision + 1, revision_token = ?, updated_at = ? WHERE id = ? AND revision = ? AND NOT EXISTS (SELECT 1 FROM shop_order_items item JOIN shop_orders orders ON orders.id = item.order_id WHERE item.sellable_item_id = ? AND orders.status = 'pending_payment')",
+				)
+				.bind(
+					token,
+					now,
+					target.product_id,
+					data.expectedRevision,
+					data.sellableItemId,
+				),
+			db
+				.prepare(
+					`UPDATE supplier_bindings SET enabled = 0, updated_at = ? WHERE sellable_item_id = ? AND enabled = 1 AND ${guard}`,
+				)
+				.bind(now, data.sellableItemId, target.product_id, token),
+			db
+				.prepare(`INSERT INTO supplier_bindings (id, sellable_item_id, provider, normalized_api_origin, protocol_version,
     upstream_product_id, upstream_sku_id, upstream_product_name, upstream_sku_name, reference_cost_minor,
     max_cost_minor, stock_quantity, remote_status, last_synced_at, enabled, created_at, updated_at)
     SELECT ?, ?, 'dhru', ?, ?, ?, ?, ?, ?, ?, ?, 0, 'active', ?, 1, ?, ? WHERE ${guard}`)
-			.bind(
-				id,
-				data.sellableItemId,
-				account.normalized_api_origin,
-				account.protocol_version,
-				data.productId,
-				data.productId,
-				quote.name,
-				quote.name,
-				quote.costMinor,
-				data.maxCostMinor,
-				now,
-				now,
-				now,
-				target.product_id,
-				token,
-			),
-		db
-			.prepare(
-				`UPDATE product_sellable_items SET fulfillment_source = 'supplier', supplier_status = 'available', cost_minor = ?, updated_at = ? WHERE id = ? AND ${guard}`,
-			)
-			.bind(
-				quote.costMinor,
-				now,
-				data.sellableItemId,
-				target.product_id,
-				token,
-			),
-		db
-			.prepare(`INSERT INTO product_definition_versions
+				.bind(
+					id,
+					data.sellableItemId,
+					account.normalized_api_origin,
+					account.protocol_version,
+					data.productId,
+					data.productId,
+					quote.name,
+					quote.name,
+					quote.costMinor,
+					data.maxCostMinor,
+					now,
+					now,
+					now,
+					target.product_id,
+					token,
+				),
+			db
+				.prepare(
+					`UPDATE product_sellable_items SET fulfillment_source = 'supplier', supplier_status = 'available', cost_minor = ?, updated_at = ? WHERE id = ? AND ${guard}`,
+				)
+				.bind(
+					quote.costMinor,
+					now,
+					data.sellableItemId,
+					target.product_id,
+					token,
+				),
+			db
+				.prepare(`INSERT INTO product_definition_versions
    (id, product_id, sellable_item_id, version, schema_json, published_at, created_by, created_at, updated_at)
    SELECT ?, ?, ?, COALESCE((SELECT MAX(version) FROM product_definition_versions WHERE sellable_item_id = ?), 0) + 1, ?, ?, ?, ?, ? WHERE ${guard}`)
-			.bind(
-				crypto.randomUUID(),
-				target.product_id,
-				data.sellableItemId,
-				data.sellableItemId,
-				JSON.stringify(quote.definitions),
-				now,
-				options.actorUserId,
-				now,
-				now,
-				target.product_id,
-				token,
-			),
+				.bind(
+					crypto.randomUUID(),
+					target.product_id,
+					data.sellableItemId,
+					data.sellableItemId,
+					JSON.stringify(quote.definitions),
+					now,
+					options.actorUserId,
+					now,
+					now,
+					target.product_id,
+					token,
+				),
 
-		db
-			.prepare(
-				`UPDATE supplier_accounts SET balance_minor = ?, balance_synced_at = ?, health_status = 'healthy', updated_at = ? WHERE id = ? AND ${guard}`,
-			)
-			.bind(
-				connection.balance.amountMinor,
-				now,
-				now,
-				account.id,
-				target.product_id,
-				token,
-			),
-		db
-			.prepare(
-				`INSERT INTO audit_logs (id, actor_user_id, action, target_type, target_id, created_at) SELECT ?, ?, 'supplier.service_bound', 'supplier_binding', ?, ? WHERE ${guard}`,
-			)
-			.bind(
-				crypto.randomUUID(),
-				options.actorUserId,
-				id,
-				now,
-				target.product_id,
-				token,
-			),
-	]);
-	if (Number(results[0]?.meta.changes) !== 1)
-		throw new DomainError("product_revision_conflict", 409, "Product changed");
-	return {
-		id,
-		productId: target.product_id,
-		revision: data.expectedRevision + 1,
-		fields: quote.definitions.map(({ key, required }) => ({ key, required })),
-	};
-}
+			db
+				.prepare(
+					`UPDATE supplier_accounts SET balance_minor = ?, balance_synced_at = ?, health_status = 'healthy', updated_at = ? WHERE id = ? AND ${guard}`,
+				)
+				.bind(
+					connection.balance.amountMinor,
+					now,
+					now,
+					account.id,
+					target.product_id,
+					token,
+				),
+			db
+				.prepare(
+					`INSERT INTO audit_logs (id, actor_user_id, action, target_type, target_id, created_at) SELECT ?, ?, 'supplier.service_bound', 'supplier_binding', ?, ? WHERE ${guard}`,
+				)
+				.bind(
+					crypto.randomUUID(),
+					options.actorUserId,
+					id,
+					now,
+					target.product_id,
+					token,
+				),
+		]);
+		if (Number(results[0]?.meta.changes) !== 1)
+			throw new DomainError(
+				"product_revision_conflict",
+				409,
+				"Product changed",
+			);
+		return {
+			id,
+			productId: target.product_id,
+			revision: data.expectedRevision + 1,
+			fields: quote.definitions.map(({ key, required }) => ({ key, required })),
+		};
+	},
+);
 
 /** Shared read-only validation; a preview never writes catalog, balances or audit rows. */
 async function loadServiceBinding(
