@@ -149,6 +149,17 @@ provider and API source, automatically selects from the eligible account pool
 for that source, and passes upstream content through the unified delivery-record
 pipeline.
 
+Cloudflare's minute Cron only sends a non-secret `commerce.maintenance` message
+to the existing Commerce Queue. The consumer performs expiration, outbox
+publication, supplier polling, synchronization, retention, and key rotation,
+keeping this work out of the Free-plan Cron's 10 ms CPU budget. The existing
+D1 operation-task lease coalesces overlapping ticks; completed work suppresses
+duplicates and delayed older ticks, and failures use the queue retry policy.
+Due-work checks use consumption time. A terminated consumer's lease recovers
+after 30 minutes. Monitor `commerce.maintenance` operation runs and Queue/DLQ
+backlog. Bun retains its existing non-overlapping in-process minute scheduler.
+No additional bindings, resource configuration, or migrations are required.
+
 Routes remain thin; feature pages, schemas, server functions, and domain
 behavior live in `src/features`, cross-domain runtime plumbing lives in
 `src/server`, and the clean-install Drizzle baseline is
