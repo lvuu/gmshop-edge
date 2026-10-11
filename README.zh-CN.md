@@ -125,6 +125,14 @@ R2、Queues 与 Cron；Bun 通过有界内存缓存、哈希化本地私有对�
 保留清理和密钥轮换移出同步请求。供应商模块按“平台 + API 来源”同步一次目录，并在
 同一来源的可用账号池中自动选择采购账号；上游返回的内容仍通过统一交付记录发放。
 
+Cloudflare 的每分钟 Cron 只向现有 Commerce Queue 投递不含秘密的
+`commerce.maintenance` 消息。消费者执行过期处理、发件箱发布、供应商轮询与同步、
+保留清理和密钥轮换，避免这些工作累积超过免费计划 Cron 的 10ms CPU 限制。
+现有 D1 操作任务租约合并重叠调度，已完成的工作抑制重复消息和延迟的旧调度，
+失败任务遵循队列重试策略；到期检查使用消费时刻。消费者被强制终止后，租约在
+30 分钟后恢复。请监控 `commerce.maintenance` 操作记录及 Queue/DLQ 积压。
+Bun 保留原有避免重叠的进程内分钟调度器。不需要新增 binding、资源配置或迁移。
+
 路由保持薄层；领域页面、schema、Server Function 和行为位于 `src/features`，跨领域运行时
 编排位于 `src/server`，全新安装的 Drizzle 唯一基线为
 `drizzle/0000_gmshop.sql`。

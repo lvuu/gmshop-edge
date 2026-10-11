@@ -5,6 +5,7 @@ import { processShopRefund } from "#/features/shop-payments/server/refunds";
 import { processSupplierOrder } from "#/features/suppliers/server/process";
 import { DomainError } from "#/lib/domain-error";
 import type { CommerceQueueMessage } from "#/server/queue/types";
+import { runQueuedScheduledCommerceWork } from "#/server/scheduled/queued";
 
 export async function handleQueue(
 	batch: MessageBatch<CommerceQueueMessage>,
@@ -129,6 +130,8 @@ function queueMessageReference(body: CommerceQueueMessage) {
 			return body.refundId;
 		case "commerce.supplier":
 			return body.supplierOrderId;
+		case "commerce.maintenance":
+			return `maintenance:${body.scheduledAt}`;
 	}
 }
 
@@ -147,6 +150,8 @@ async function processQueueMessage(body: CommerceQueueMessage, env: Env) {
 			return processShopRefund(db, body.refundId);
 		case "commerce.supplier":
 			return processSupplierOrder(db, body.supplierOrderId);
+		case "commerce.maintenance":
+			return runQueuedScheduledCommerceWork(env, body.scheduledAt);
 	}
 }
 
@@ -171,6 +176,14 @@ function isCommerceQueueMessage(value: unknown): value is CommerceQueueMessage {
 			return validReference(value, "refundId");
 		case "commerce.supplier":
 			return validReference(value, "supplierOrderId");
+		case "commerce.maintenance":
+			return (
+				Object.keys(value).length === 3 &&
+				typeof value.scheduledAt === "number" &&
+				Number.isSafeInteger(value.scheduledAt) &&
+				value.scheduledAt > 0 &&
+				value.scheduledAt <= 8_640_000_000_000_000
+			);
 		default:
 			return false;
 	}

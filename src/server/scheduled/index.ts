@@ -9,6 +9,7 @@ import {
 	queueDueSupplierReconciliations,
 } from "#/features/suppliers/server/outbox";
 import { runTelegramMaintenance } from "#/features/telegram/server/maintenance";
+import type { MaintenanceQueueMessage } from "#/server/queue/types";
 import { runMaintenance } from "#/server/scheduled/maintenance";
 
 export { runMaintenance };
@@ -19,7 +20,13 @@ export function handleScheduled(
 	context: ExecutionContext,
 ): void {
 	context.waitUntil(
-		runScheduledCommerceWork(env, controller.cron, controller.scheduledTime),
+		// Free-plan Cron invocations have a 10 ms CPU budget. Only enqueue here;
+		// database maintenance and provider calls run in the durable consumer.
+		env.COMMERCE_QUEUE.send({
+			kind: "commerce.maintenance",
+			version: 1,
+			scheduledAt: controller.scheduledTime,
+		} satisfies MaintenanceQueueMessage),
 	);
 }
 

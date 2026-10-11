@@ -28,9 +28,16 @@ export interface SupplierQueueMessage {
 	supplierOrderId: string;
 }
 
+export interface MaintenanceQueueMessage {
+	kind: "commerce.maintenance";
+	version: 1;
+	scheduledAt: number;
+}
+
 export type CommerceQueueMessage =
 	| DeliveryQueueMessage
 	| AutomationQueueMessage
 	| NotificationQueueMessage
 	| RefundQueueMessage
-	| SupplierQueueMessage;
+	| SupplierQueueMessage
+	| MaintenanceQueueMessage;

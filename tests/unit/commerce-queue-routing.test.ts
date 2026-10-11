@@ -11,6 +11,12 @@ describe("commerce queue envelope routing", () => {
 			notificationDeliveryId: "notification-1",
 		},
 		{ kind: "commerce.refund", version: 1, refundId: "refund-1" },
+		{ kind: "commerce.supplier", version: 1, supplierOrderId: "supplier-1" },
+		{
+			kind: "commerce.maintenance",
+			version: 1,
+			scheduledAt: 1_791_729_000_000,
+		},
 	])("accepts $kind", (message) => {
 		expect(queueMessageKind(message)).toBe("commerce");
 	});
@@ -20,6 +26,18 @@ describe("commerce queue envelope routing", () => {
 		{ kind: "webhook.delivery", version: 1, deliveryId: "legacy" },
 		{ kind: "commerce.delivery", version: 2, deliveryId: "delivery-1" },
 		{ kind: "commerce.delivery", version: 1, deliveryId: "", extra: true },
+		{ kind: "commerce.maintenance", version: 1, scheduledAt: "1791729000000" },
+		{ kind: "commerce.maintenance", version: 1, scheduledAt: 0 },
+		{ kind: "commerce.maintenance", version: 1, scheduledAt: -1 },
+		{ kind: "commerce.maintenance", version: 1, scheduledAt: 1.5 },
+		{ kind: "commerce.maintenance", version: 1, scheduledAt: Number.NaN },
+		{ kind: "commerce.maintenance", version: 1, scheduledAt: Infinity },
+		{
+			kind: "commerce.maintenance",
+			version: 1,
+			scheduledAt: Number.MAX_SAFE_INTEGER,
+		},
+		{ kind: "commerce.maintenance", version: 1, scheduledAt: 1, extra: true },
 		null,
 	])("rejects unsupported envelope %#", (message) => {
 		expect(queueMessageKind(message)).toBe("invalid");
