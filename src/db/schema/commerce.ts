@@ -605,6 +605,7 @@ export const commerceEvents = sqliteTable(
 			table.createdAt,
 			table.id,
 		),
+		index("commerce_events_created_idx").on(table.createdAt, table.id),
 		index("commerce_events_order_type_idx").on(table.orderId, table.eventType),
 		check(
 			"commerce_events_amount_check",
@@ -822,6 +823,7 @@ export const shopOrderItems = sqliteTable(
 			table.sellableItemId,
 			table.id,
 		),
+		index("shop_order_items_product_idx").on(table.productId, table.id),
 		check(
 			"shop_order_items_delivery_component_type_check",
 			sql`${table.deliveryComponentType} IN ('stock', 'download', 'automation', 'service')`,

@@ -117,6 +117,37 @@ describe("commerce hot-query plans and rows read", () => {
 		expect(plans[3]).toContain("supplier_orders_upstream_order_idx");
 	});
 
+	it("uses product_id index for catalog sales_count subquery", async () => {
+		const details = await explain(
+			db,
+			`SELECT SUM(item.quantity) FROM shop_order_items item
+			 JOIN shop_orders sold_order ON sold_order.id = item.order_id
+			 WHERE item.product_id = 'product-001'
+			  AND sold_order.status IN ('paid','completed','fulfilling','refunding','refunded')`,
+		);
+		expect(details).toContain("shop_order_items_product_idx");
+	});
+
+	it("uses created_at index for commerce_events retention cleanup", async () => {
+		const details = await explain(
+			db,
+			`SELECT id FROM commerce_events WHERE created_at <= 200000
+			 ORDER BY created_at, id LIMIT 500`,
+		);
+		expect(details).toContain("commerce_events_created_idx");
+		expect(details).not.toContain("USE TEMP B-TREE");
+	});
+
+	it("uses expires_at index for verifications cleanup", async () => {
+		const details = await explain(
+			db,
+			`SELECT id FROM verifications WHERE expires_at <= 200000
+			 ORDER BY expires_at, id LIMIT 500`,
+		);
+		expect(details).toContain("verifications_expiry_idx");
+		expect(details).not.toContain("USE TEMP B-TREE");
+	});
+
 	it("runs PRAGMA optimize after index changes", async () => {
 		await expect(db.prepare("PRAGMA optimize").run()).resolves.toMatchObject({
 			success: true,
@@ -170,6 +201,35 @@ async function seed(db: D1Database) {
 			 SELECT printf('outbox-%03d', value), 'delivery.requested', 'shop_order',
 			  printf('order-%03d', value), printf('outbox-idem-%03d', value), '{}',
 			  'pending', value, value FROM seq`,
+		),
+		db.prepare(
+			`WITH RECURSIVE seq(value) AS (
+			 SELECT 1 UNION ALL SELECT value + 1 FROM seq WHERE value < 100
+			) INSERT INTO shop_order_items
+			 (id, order_id, product_id, sellable_item_id, product_name,
+			  delivery_component_id, delivery_component_type, delivery_component_version,
+			  sellable_item_name, quantity, unit_price_minor, subtotal_minor,
+			  created_at, updated_at)
+			 SELECT printf('item-%03d', value), printf('order-%03d', value),
+			  'product-001', 'sellableItem-stock', 'Product 1',
+			  'sellableItem-stock', 'stock', 1, 'Stock', 1, '100', '100',
+			  value, value FROM seq`,
+		),
+		db.prepare(
+			`WITH RECURSIVE seq(value) AS (
+			 SELECT 1 UNION ALL SELECT value + 1 FROM seq WHERE value < 100
+			) INSERT INTO commerce_events
+			 (id, event_type, session_id, created_at)
+			 SELECT printf('event-%03d', value), 'catalog_viewed', 'session-1',
+			  value FROM seq`,
+		),
+		db.prepare(
+			`WITH RECURSIVE seq(value) AS (
+			 SELECT 1 UNION ALL SELECT value + 1 FROM seq WHERE value < 100
+			) INSERT INTO verifications
+			 (id, identifier, value, expires_at, created_at, updated_at)
+			 SELECT printf('verify-%03d', value), 'identifier', 'value',
+			  value, value, value FROM seq`,
 		),
 	]);
 }

@@ -43,6 +43,7 @@ describe("GMShop installation", { timeout: 30_000 }, () => {
 			"0006_dhru_provider.sql",
 			"0007_supplier_service_result.sql",
 			"0008_service_products.sql",
+			"0009_hot_query_indexes_2.sql",
 		]);
 		const legacyTables = await database
 			.prepare(

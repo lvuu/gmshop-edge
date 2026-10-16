@@ -110,7 +110,10 @@ export const verifications = sqliteTable(
 		expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
 		...timestamps,
 	},
-	(table) => [index("verifications_identifier_idx").on(table.identifier)],
+	(table) => [
+		index("verifications_identifier_idx").on(table.identifier),
+		index("verifications_expiry_idx").on(table.expiresAt, table.id),
+	],
 );
 
 export const user = users;
