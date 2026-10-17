@@ -1555,6 +1555,7 @@ export const supplierOrders = sqliteTable(
 			.default("pending"),
 		attemptCount: integer("attempt_count").notNull().default(0),
 		selectionCount: integer("selection_count").notNull().default(0),
+		reconcilePollCount: integer("reconcile_poll_count").notNull().default(0),
 		accountLockedAt: integer("account_locked_at", { mode: "timestamp_ms" }),
 		nextRetryAt: integer("next_retry_at", { mode: "timestamp_ms" }),
 		lastErrorCode: text("last_error_code"),

@@ -21,6 +21,7 @@ import {
 	adapterForSupplierAccount,
 	type SupplierAccountRuntimeRow,
 } from "./account-runtime";
+import { reconcilePollDelayMs } from "./outbox";
 import { claimSupplierApiBudget } from "./rate-limit";
 
 type SupplierOrderContext = {
@@ -43,6 +44,7 @@ type SupplierOrderContext = {
 	provider_request_no: string | null;
 	upstream_order_id: string | null;
 	binding_snapshot_json: string;
+	reconcile_poll_count: number;
 	updated_at: number;
 };
 
@@ -284,7 +286,8 @@ async function processSupplierOrderUnlocked(
 							 quoted_unit_cost_minor = ?, total_cost_minor = ?,
 							 state = 'submitting', attempt_count = attempt_count + 1,
 							 selection_count = selection_count + 1, submitted_at = ?,
-							 next_retry_at = NULL, last_error_code = NULL, updated_at = ?
+							 next_retry_at = NULL, reconcile_poll_count = 0,
+							 last_error_code = NULL, updated_at = ?
 							 WHERE id = ? AND selected_account_id IS NULL
 							 AND state IN ('pending', 'selecting')
  AND EXISTS (SELECT 1 FROM shop_order_items oi JOIN shop_orders o ON o.id = oi.order_id WHERE oi.id = supplier_orders.order_item_id AND o.status IN ('paid', 'fulfilling'))`,
@@ -315,6 +318,7 @@ async function processSupplierOrderUnlocked(
 						selected_credentials_revision: candidate.credentials_revision,
 						provider_request_no: requestNo,
 						state: "submitting",
+						reconcile_poll_count: 0,
 						updated_at: now,
 					};
 					await db
@@ -819,7 +823,7 @@ async function markUncertain(
 			now,
 			isDhru ? 1 : 0,
 			upstreamOrderId,
-			now + 15_000,
+			now + reconcilePollDelayMs(order.reconcile_poll_count),
 			code,
 			now,
 			order.id,

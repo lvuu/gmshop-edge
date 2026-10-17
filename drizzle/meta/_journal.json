@@ -71,6 +71,13 @@
       "when": 1792167300000,
       "tag": "0009_hot_query_indexes_2",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1792167400000,
+      "tag": "0010_supplier_reconcile_backoff",
+      "breakpoints": true
     }
   ]
 }

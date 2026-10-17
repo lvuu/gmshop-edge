@@ -20,11 +20,27 @@ import {
 	supplierCredentialFingerprint,
 } from "#/features/suppliers/secrets";
 import { assertPublicSupplierHostname } from "#/features/suppliers/server/destination-security";
+import { reconcilePollDelayMs } from "#/features/suppliers/server/outbox";
 import {
 	normalizeSupplierSource,
 	sameSupplierSource,
 } from "#/features/suppliers/server/source-url";
 import { createSecretKeyring } from "#/lib/secrets";
+
+describe("supplier reconciliation poll backoff", () => {
+	it("grows the delay and caps it at one hour", () => {
+		const delays = [0, 1, 2, 3, 4, 5, 6, 20].map(reconcilePollDelayMs);
+		expect(delays[0]).toBe(60_000);
+		for (let index = 1; index < 7; index += 1)
+			expect(delays[index]).toBeGreaterThan(delays[index - 1] as number);
+		expect(delays[7]).toBe(3_600_000);
+	});
+
+	it("treats a negative or fractional count as the first poll", () => {
+		expect(reconcilePollDelayMs(-5)).toBe(60_000);
+		expect(reconcilePollDelayMs(1.9)).toBe(120_000);
+	});
+});
 
 describe("supplier source identity", () => {
 	it("normalizes equivalent HTTPS origins without a persisted source key", () => {

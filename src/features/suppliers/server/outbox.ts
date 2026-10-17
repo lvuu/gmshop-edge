@@ -5,6 +5,20 @@ const payloadSchema = z.object({
 	supplierOrderId: z.string().min(1).max(128),
 });
 
+const RECONCILE_POLL_MAX_DELAY_MS = 3_600_000;
+
+/**
+ * An order that stays unresolved is polled again, but each repeat poll back
+ * off so a single stuck order cannot consume the whole queue operation budget.
+ * The exponent stops doubling once the delay reaches one hour.
+ */
+export function reconcilePollDelayMs(pollCount: number) {
+	return Math.min(
+		RECONCILE_POLL_MAX_DELAY_MS,
+		60_000 * 2 ** Math.max(0, Math.min(6, Math.trunc(pollCount))),
+	);
+}
+
 /** Durable polling continues independently of the queue's finite retry budget. */
 export async function queueDueSupplierReconciliations(
 	db: D1Database,
@@ -20,11 +34,16 @@ export async function queueDueSupplierReconciliations(
 	  WHERE e.aggregate_type = 'supplier_order' AND e.aggregate_id = so.id
 	  AND e.event_type = 'supplier.requested' AND e.status = 'pending')`;
 	const rows = await db
-		.prepare(`SELECT so.id, so.next_retry_at, so.updated_at
+		.prepare(`SELECT so.id, so.next_retry_at, so.updated_at, so.reconcile_poll_count
 	 FROM supplier_orders so JOIN shop_orders o ON o.id = so.order_id
 	 WHERE ${eligible} ORDER BY so.next_retry_at, so.id LIMIT ?`)
 		.bind(now, Math.max(1, Math.min(100, Math.trunc(limit))))
-		.all<{ id: string; next_retry_at: number; updated_at: number }>();
+		.all<{
+			id: string;
+			next_retry_at: number;
+			updated_at: number;
+			reconcile_poll_count: number;
+		}>();
 	if (!rows.results.length) return { queued: 0 };
 	const statements = rows.results.flatMap((row) => {
 		const id = crypto.randomUUID();
@@ -48,10 +67,14 @@ export async function queueDueSupplierReconciliations(
 					now,
 				),
 			db
-				.prepare(`UPDATE supplier_orders SET next_retry_at = ?, updated_at = ?
+				.prepare(`UPDATE supplier_orders SET next_retry_at = ?,
+			 reconcile_poll_count = reconcile_poll_count + 1, updated_at = ?
 			 WHERE id = ? AND EXISTS (SELECT 1 FROM outbox_events WHERE id = ?)`)
 				.bind(
-					Math.max(now + 60_000, row.next_retry_at + 1),
+					Math.max(
+						now + reconcilePollDelayMs(row.reconcile_poll_count),
+						row.next_retry_at + 1,
+					),
 					Math.max(now, row.updated_at + 1),
 					row.id,
 					id,
