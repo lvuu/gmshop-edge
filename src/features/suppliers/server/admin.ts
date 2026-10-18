@@ -191,8 +191,7 @@ export const saveSupplierAccountFn = createServerFn({ method: "POST" })
 		if (!before || data.credentials !== undefined) {
 			const adapter = await adapterForSupplierAccount(testRow, context.runtime);
 			connection = await adapter.testConnection();
-			if (source.provider !== "dhru")
-				await adapter.listProducts({ page: 1, pageSize: 1 });
+			await adapter.listProducts({ page: 1, pageSize: 1 });
 		}
 
 		const statement = before

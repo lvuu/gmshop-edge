@@ -107,10 +107,9 @@ describe("Dhru supplier registration", () => {
 			),
 		).toBeInstanceOf(DhruAdapter);
 	});
-	it("blocks every stock operation before contacting Dhru", async () => {
+	it("blocks stock operations before an explicit service snapshot is bound", async () => {
 		const provider = adapter();
 		for (const operation of [
-			() => provider.listProducts({ page: 1, pageSize: 10 }),
 			() => provider.getSku("123", "123"),
 			() =>
 				provider.submitOrder({

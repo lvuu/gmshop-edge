@@ -7,9 +7,9 @@ import {
 	supplierSuppliedResultSchema,
 } from "../schema";
 import { normalizeSupplierSource } from "../server/source-url";
-import { DhruClient, DhruClientError } from "./dhru-client";
+import { DhruClient, DhruClientError, type DhruProduct } from "./dhru-client";
 import { importDhruFields } from "./dhru-fields";
-import type { SupplierAdapter } from "./types";
+import type { SupplierAdapter, SupplierProduct } from "./types";
 
 /** Server-only provider. Paid service submission requires an explicit input snapshot. */
 export class DhruAdapter implements SupplierAdapter {
@@ -52,8 +52,19 @@ export class DhruAdapter implements SupplierAdapter {
 		};
 	}
 
-	async listProducts(): ReturnType<SupplierAdapter["listProducts"]> {
-		throw serviceNotReady();
+	async listProducts(input: {
+		page: number;
+		pageSize: number;
+	}): Promise<{ products: SupplierProduct[]; total: number }> {
+		const catalog = await this.client.listProducts();
+		const entries = Object.entries(catalog.products);
+		const start = Math.max(0, (input.page - 1) * input.pageSize);
+		return {
+			total: entries.length,
+			products: entries
+				.slice(start, start + input.pageSize)
+				.map(([id, product]) => this.product(id, product)),
+		};
 	}
 	async getServiceQuote(productId: string) {
 		const product = z
@@ -176,6 +187,29 @@ export class DhruAdapter implements SupplierAdapter {
 			};
 		// GET replay is plain text; only webhook replay is base64.
 		return result.data;
+	}
+
+	private product(id: string, product: DhruProduct): SupplierProduct {
+		const price = product.price.includes(".")
+			? product.price.replace(/0+$/, "").replace(/\.$/, "")
+			: product.price;
+		return {
+			id,
+			name: product.name,
+			description: "",
+			imageUrls: [],
+			categoryNames: product.type ? [product.type] : [],
+			active: true,
+			skus: [
+				{
+					id,
+					name: product.name,
+					costMinor: decimalToMinor(price, this.input.currencyDecimals),
+					stockQuantity: 2_147_483_647,
+					active: true,
+				},
+			],
+		};
 	}
 }
 

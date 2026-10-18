@@ -60,8 +60,14 @@ describe("supplier account administration with real D1 and Dhru adapter", () => 
 		}>();
 	const audits = () => db.prepare("SELECT * FROM audit_logs").all();
 	const respond = (balance = "100.00") =>
-		vi.mocked(fetchOutbound).mockResolvedValue(
-			Response.json({
+		vi.mocked(fetchOutbound).mockImplementation(async (url) => {
+			if (new URL(String(url)).pathname.endsWith("/products"))
+				return Response.json({
+					status: "success",
+					code: 200,
+					data: { currency: "USD", categories: {}, products: {} },
+				});
+			return Response.json({
 				status: "success",
 				code: 200,
 				data: {
@@ -70,8 +76,8 @@ describe("supplier account administration with real D1 and Dhru adapter", () => 
 					name: "Fixture",
 					email: "supplier@example.com",
 				},
-			}),
-		);
+			});
+		});
 	beforeEach(async () => {
 		vi.resetAllMocks();
 		mf = new Miniflare({
@@ -118,10 +124,14 @@ describe("supplier account administration with real D1 and Dhru adapter", () => 
 				runtime.commerceSecret,
 			),
 		).toEqual(input.credentials);
-		expect(fetchOutbound).toHaveBeenCalledTimes(1);
+		expect(fetchOutbound).toHaveBeenCalledTimes(2);
 		const [url, init] = vi.mocked(fetchOutbound).mock.calls[0] ?? [];
 		expect(new URL(String(url)).pathname).toBe("/api/reseller/v1/account");
 		expect(init?.method).toBe("GET");
+		const [productsUrl] = vi.mocked(fetchOutbound).mock.calls[1] ?? [];
+		expect(new URL(String(productsUrl)).pathname).toBe(
+			"/api/reseller/v1/products",
+		);
 		expect(getAdminRuntimeServerContext).toHaveBeenCalledWith(
 			systemPermission("suppliers", "create"),
 		);
@@ -168,7 +178,7 @@ describe("supplier account administration with real D1 and Dhru adapter", () => 
 				runtime.commerceSecret,
 			),
 		).toEqual({ apiToken: "fixture-token-two" });
-		expect(fetchOutbound).toHaveBeenCalledTimes(2);
+		expect(fetchOutbound).toHaveBeenCalledTimes(4);
 		expect(getAdminRuntimeServerContext).toHaveBeenLastCalledWith(
 			systemPermission("suppliers", "update"),
 		);
@@ -218,7 +228,7 @@ describe("supplier account administration with real D1 and Dhru adapter", () => 
 				systemPermission("suppliers", "update"),
 			);
 		}
-		expect(fetchOutbound).toHaveBeenCalledTimes(1);
+		expect(fetchOutbound).toHaveBeenCalledTimes(2);
 	});
 
 	it("rejects wallet currency mismatch before saving any account or audit", async () => {

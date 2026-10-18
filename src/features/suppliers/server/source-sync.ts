@@ -67,8 +67,6 @@ export async function syncSupplierSource(input: {
 	now?: number;
 	fetcher?: typeof fetch;
 }) {
-	if (input.source.provider === "dhru")
-		return { skipped: true, reason: "manual_service_binding" } as const;
 	const now = input.now ?? Date.now();
 	const task = await sourceSyncTaskName(input.source, now, input.full);
 	const completed = await input.db
@@ -203,7 +201,8 @@ async function allProducts(
 	adapter: Awaited<ReturnType<typeof adapterForSupplierAccount>>,
 	updatedAfter?: string | null,
 ) {
-	const pageSize = provider === "acg" ? MAX_CATALOG_PRODUCTS : 50;
+	const pageSize =
+		provider === "acg" || provider === "dhru" ? MAX_CATALOG_PRODUCTS : 50;
 	const products: SupplierProduct[] = [];
 	let page = 1;
 	while (products.length < MAX_CATALOG_PRODUCTS) {
@@ -218,7 +217,8 @@ async function allProducts(
 		if (
 			products.length >= result.total ||
 			result.products.length === 0 ||
-			provider === "acg"
+			provider === "acg" ||
+			provider === "dhru"
 		)
 			break;
 		page += 1;
