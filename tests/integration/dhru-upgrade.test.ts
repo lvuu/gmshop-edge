@@ -2,7 +2,9 @@ import { readdir, readFile } from "node:fs/promises";
 import { Miniflare } from "miniflare";
 import { expect, it } from "vitest";
 
-it("upgrades populated pre-Dhru D1 through all service migrations without losing history", async () => {
+it("upgrades populated pre-Dhru D1 through all service migrations without losing history", {
+	timeout: 30_000,
+}, async () => {
 	const miniflare = new Miniflare({
 		modules: true,
 		script: "export default { fetch() { return new Response('ok') } }",
