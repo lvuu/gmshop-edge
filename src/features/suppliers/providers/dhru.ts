@@ -1,6 +1,6 @@
 import { ZodError, z } from "zod";
 import { DomainError } from "#/lib/domain-error";
-import { decimalToMinor } from "../money";
+import { decimalToMinor, roundDecimal } from "../money";
 import {
 	type SupplierPurchaseResult,
 	supplierServiceOrderInputSchema,
@@ -70,12 +70,9 @@ export class DhruAdapter implements SupplierAdapter {
 		const product = z
 			.object({ name: z.string(), price: z.string().regex(/^\d+(?:\.\d+)?$/) })
 			.parse(await this.client.getProduct(productId));
-		const price = product.price.includes(".")
-			? product.price.replace(/0+$/, "").replace(/\.$/, "")
-			: product.price;
 		return {
 			name: product.name,
-			costMinor: decimalToMinor(price, this.input.currencyDecimals),
+			costMinor: this.quotedMinor(product.price),
 		};
 	}
 	async getServiceDefinition(productId: string) {
@@ -86,12 +83,9 @@ export class DhruAdapter implements SupplierAdapter {
 				fields: z.unknown(),
 			})
 			.parse(await this.client.getProduct(productId));
-		const price = product.price.includes(".")
-			? product.price.replace(/0+$/, "").replace(/\.$/, "")
-			: product.price;
 		return {
 			name: product.name,
-			costMinor: decimalToMinor(price, this.input.currencyDecimals),
+			costMinor: this.quotedMinor(product.price),
 			definitions: importDhruFields(product.fields),
 		};
 	}
@@ -190,9 +184,6 @@ export class DhruAdapter implements SupplierAdapter {
 	}
 
 	private product(id: string, product: DhruProduct): SupplierProduct {
-		const price = product.price.includes(".")
-			? product.price.replace(/0+$/, "").replace(/\.$/, "")
-			: product.price;
 		return {
 			id,
 			name: product.name,
@@ -204,12 +195,20 @@ export class DhruAdapter implements SupplierAdapter {
 				{
 					id,
 					name: product.name,
-					costMinor: decimalToMinor(price, this.input.currencyDecimals),
+					costMinor: this.quotedMinor(product.price),
 					stockQuantity: 2_147_483_647,
 					active: true,
 				},
 			],
 		};
+	}
+
+	/** Dhru quotes sub-cent costs; quantize to the account currency precision. */
+	private quotedMinor(price: string) {
+		return decimalToMinor(
+			roundDecimal(price, this.input.currencyDecimals),
+			this.input.currencyDecimals,
+		);
 	}
 }
 

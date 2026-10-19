@@ -4,6 +4,7 @@ import {
 	decimalToMinor,
 	markupMinor,
 	multiplyMinor,
+	roundDecimal,
 } from "#/features/suppliers/money";
 import { AcgAdapter } from "#/features/suppliers/providers/acg";
 import { DujiaoNextAdapter } from "#/features/suppliers/providers/dujiao-next";
@@ -196,6 +197,27 @@ describe("supplier money", () => {
 		"rejects invalid provider money %s",
 		(value) => {
 			expect(() => decimalToMinor(value, 2)).toThrow(
+				"Supplier returned an invalid monetary value",
+			);
+		},
+	);
+
+	it("quantizes sub-cent supplier costs to the currency precision", () => {
+		expect(roundDecimal("0.91500", 2)).toBe("0.92");
+		expect(roundDecimal("0.91499", 2)).toBe("0.91");
+		expect(roundDecimal("450.78000", 2)).toBe("450.78");
+		expect(roundDecimal("12.34", 2)).toBe("12.34");
+		expect(roundDecimal("12", 2)).toBe("12");
+		expect(roundDecimal("0.5", 0)).toBe("1");
+		expect(roundDecimal("1.005", 2)).toBe("1.01");
+		expect(roundDecimal("1.004", 2)).toBe("1.00");
+		expect(decimalToMinor(roundDecimal("0.91500", 2), 2)).toBe("92");
+	});
+
+	it.each(["-1", "1e2", "01", "NaN"])(
+		"rejects invalid provider money for quantizing %s",
+		(value) => {
+			expect(() => roundDecimal(value, 2)).toThrow(
 				"Supplier returned an invalid monetary value",
 			);
 		},

@@ -166,4 +166,45 @@ describe("Dhru supplier registration", () => {
 			}
 		},
 	);
+	it("quantizes sub-cent catalogue prices to the currency precision", async () => {
+		const catalog = vi
+			.spyOn(
+				(await import("#/features/suppliers/providers/dhru-client")).DhruClient
+					.prototype,
+				"listProducts",
+			)
+			.mockResolvedValue({
+				currency: "USD",
+				categories: {},
+				products: {
+					"13": { name: "Reissue", type: "imei", price: "0.91500", fields: [] },
+				},
+			});
+		try {
+			expect(await adapter().listProducts({ page: 1, pageSize: 10 })).toEqual({
+				total: 1,
+				products: [
+					{
+						id: "13",
+						name: "Reissue",
+						description: "",
+						imageUrls: [],
+						categoryNames: ["imei"],
+						active: true,
+						skus: [
+							{
+								id: "13",
+								name: "Reissue",
+								costMinor: "92",
+								stockQuantity: 2_147_483_647,
+								active: true,
+							},
+						],
+					},
+				],
+			});
+		} finally {
+			catalog.mockRestore();
+		}
+	});
 });

@@ -11,6 +11,17 @@ const orderUuid = z
 	.max(100)
 	.regex(/^[A-Za-z0-9-]+$/);
 const decimal = z.string().regex(/^\d+(?:\.\d+)?$/);
+const priceValue = z
+	.union([
+		decimal,
+		z
+			.number()
+			.finite()
+			.nonnegative()
+			.transform((value) => String(value)),
+	])
+	.nullish()
+	.transform((value) => value ?? "0");
 const account = z
 	.object({
 		currency: z.string().min(1),
@@ -23,7 +34,7 @@ const product = z
 	.object({
 		name: z.string(),
 		type: z.string(),
-		price: decimal,
+		price: priceValue,
 		fields: z.array(
 			z
 				.object({
@@ -40,7 +51,7 @@ const catalog = z
 		currency: z.string().min(1),
 		categories: z.record(
 			z.string(),
-			z.object({ name: z.string(), type: z.string() }).passthrough(),
+			z.object({ name: z.string(), type: z.string().optional() }).passthrough(),
 		),
 		products: z.record(z.string(), product),
 	})

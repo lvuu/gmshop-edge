@@ -64,6 +64,33 @@ describe("Dhru Client", () => {
 		};
 		expect(await setup(data).client.listProducts()).toEqual(data);
 	});
+	it("accepts catalogue categories without a type field", async () => {
+		const data = {
+			currency: "USD",
+			categories: { C12: { name: "IMEI Services" } },
+			products: {
+				"123": {
+					name: "Check",
+					type: "imei",
+					price: "1.25",
+					fields: [{ name: "IMEI", type: "imei", required: true }],
+				},
+			},
+		};
+		expect(await setup(data).client.listProducts()).toEqual(data);
+	});
+	it("normalizes numeric and absent product prices", async () => {
+		const catalog = await setup({
+			currency: "USD",
+			categories: {},
+			products: {
+				"13": { name: "Sub-cent", type: "imei", price: 0.915, fields: [] },
+				"14": { name: "Reissue", type: "imei", fields: [] },
+			},
+		}).client.listProducts();
+		expect(catalog.products["13"]?.price).toBe("0.915");
+		expect(catalog.products["14"]?.price).toBe("0");
+	});
 	it("uses product_id for individual product lookup", async () => {
 		const { client, fetcher } = setup({
 			product_id: 123,
