@@ -55,13 +55,22 @@ it("upgrades populated pre-Dhru D1 through all service migrations without losing
 			"supplier_bindings",
 			"supplier_orders",
 		];
+		// Pin the projection to the columns present before the service migrations so
+		// additive columns do not register as history loss.
+		const projections = await Promise.all(
+			tables.map(async (table) => {
+				const info = await db.prepare(`PRAGMA table_info(${table})`).all();
+				const names = (info.results as Array<{ name: string }>).map(
+					(column) => column.name,
+				);
+				return `SELECT ${names
+					.map((name) => `"${name}"`)
+					.join(", ")} FROM ${table} ORDER BY id`;
+			}),
+		);
 		async function snapshot() {
 			return Promise.all(
-				tables.map(
-					async (table) =>
-						(await db.prepare(`SELECT * FROM ${table} ORDER BY id`).all())
-							.results,
-				),
+				projections.map(async (sql) => (await db.prepare(sql).all()).results),
 			);
 		}
 		const before = await snapshot();
