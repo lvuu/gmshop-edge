@@ -22,8 +22,24 @@ export async function handleDhruSupplierCallback(
 	} catch {
 		return Response.json({ ok: false }, { status: 400 });
 	}
+	// Fusion Pro calls the echoed order identifier `order_id` in the callback
+	// body (the GET query parameter stays `order_uuid`). Accept both names and
+	// prefer the documented field. `reference_id` is always the supplier order
+	// UUID this worker sent in `POST /order`, so a strict UUID match rejects
+	// forged or mismatched notices before any reconciliation is scheduled.
 	const notice = z
-		.object({ reference_id: z.uuid(), order_uuid: z.string().min(1).max(512) })
+		.object({
+			reference_id: z.uuid(),
+			order_id: z.string().min(1).max(512).optional(),
+			order_uuid: z.string().min(1).max(512).optional(),
+		})
+		.refine((value) => Boolean(value.order_id ?? value.order_uuid), {
+			message: "order identifier required",
+		})
+		.transform((value) => ({
+			reference_id: value.reference_id,
+			order_uuid: value.order_id ?? value.order_uuid ?? "",
+		}))
 		.safeParse(body);
 	if (!notice.success) return Response.json({ ok: false }, { status: 400 });
 	const now = Date.now();
