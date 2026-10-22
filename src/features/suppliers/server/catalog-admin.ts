@@ -235,6 +235,16 @@ export const importSupplierProductsFn = createServerFn({ method: "POST" })
 			normalizedApiOrigin: normalized.normalizedApiOrigin,
 			protocolVersion: normalized.protocolVersion,
 		};
+		// Dhru only sells services. A stock import would create the wrong
+		// product type and order submission would fail because the Dhru
+		// adapter has no SKU lookup. Bind Dhru services from the product
+		// editor instead.
+		if (source.provider === "dhru")
+			throw new DomainError(
+				"supplier_dhru_import_not_supported",
+				409,
+				"Dhru services must be bound from the product editor, not imported as stock",
+			);
 		const catalog = await readCachedSupplierCatalog(context.env.CACHE, source);
 		if (!catalog)
 			throw new DomainError(
@@ -532,6 +542,14 @@ export const switchSupplierBindingFn = createServerFn({ method: "POST" })
 			normalizedApiOrigin: normalized.normalizedApiOrigin,
 			protocolVersion: normalized.protocolVersion,
 		};
+		// Switching is for stock products only; Dhru services are bound from
+		// the product editor.
+		if (source.provider === "dhru")
+			throw new DomainError(
+				"supplier_dhru_import_not_supported",
+				409,
+				"Dhru services must be bound from the product editor, not switched as stock",
+			);
 		const [catalog, target, account] = await Promise.all([
 			readCachedSupplierCatalog(context.env.CACHE, source),
 			context.db
