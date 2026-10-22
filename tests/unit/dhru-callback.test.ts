@@ -1,15 +1,24 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { handleDhruSupplierCallback } from "#/features/suppliers/server/dhru-callback";
 
-// Minimal D1 mock: rate-limit claim always allows, and UPDATE statements run.
+type BoundCall = { sql: string; params: unknown[] };
+
+// Minimal D1 mock: rate-limit claim always allows, UPDATE statements run,
+// and bound calls are captured so the SQL contract can be asserted.
 function mockDb(overrides: { run?: () => unknown } = {}) {
-	const prepared = {
-		bind: () => ({
+	const calls: BoundCall[] = [];
+	const prepared = (sql: string) => ({
+		bind: (...params: unknown[]) => ({
 			first: () => Promise.resolve({ count: 1 }),
-			run: () => Promise.resolve(overrides.run?.() ?? { meta: {} }),
+			run: () => {
+				calls.push({ sql, params });
+				return Promise.resolve(overrides.run?.() ?? { meta: {} });
+			},
 		}),
+	});
+	return { prepare: prepared, calls } as unknown as D1Database & {
+		calls: BoundCall[];
 	};
-	return { prepare: () => prepared } as unknown as D1Database;
 }
 
 function post(body: unknown) {
@@ -49,6 +58,27 @@ describe("Dhru supplier callback", () => {
 			db,
 		);
 		expect(response.status).toBe(202);
+	});
+
+	it("stores the order identifier when the uncertain order has none", async () => {
+		const db = mockDb();
+		await handleDhruSupplierCallback(
+			post({
+				reference_id: "550e8400-e29b-41d4-a716-446655440000",
+				order_id: "D25040311111228272516",
+			}),
+			"550e8400-e29b-41d4-a716-446655440000",
+			db,
+		);
+		const update = db.calls.find((call) =>
+			call.sql.includes("UPDATE supplier_orders"),
+		);
+		expect(update?.sql).toContain("COALESCE(upstream_order_id, ?)");
+		expect(update?.sql).toContain(
+			"(upstream_order_id IS NULL OR upstream_order_id = ?)",
+		);
+		// First bound value is the order identifier used to fill a NULL column.
+		expect(update?.params[0]).toBe("D25040311111228272516");
 	});
 
 	it("rejects a notice that carries neither order identifier", async () => {

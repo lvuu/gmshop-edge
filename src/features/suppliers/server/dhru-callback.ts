@@ -43,11 +43,20 @@ export async function handleDhruSupplierCallback(
 		.safeParse(body);
 	if (!notice.success) return Response.json({ ok: false }, { status: 400 });
 	const now = Date.now();
+	// An uncertain submission may have left upstream_order_id NULL (for example
+	// a network timeout after Dhru already accepted the order). When the
+	// callback finally arrives with the real order identifier, store it so the
+	// authenticated reconciliation can look it up. If an identifier was
+	// already persisted it must match the callback exactly.
 	await db
-		.prepare(`UPDATE supplier_orders SET next_retry_at = ?, updated_at = ?
- WHERE id = ? AND selected_account_id = ? AND upstream_order_id = ? AND state = 'uncertain'
+		.prepare(`UPDATE supplier_orders SET
+ upstream_order_id = COALESCE(upstream_order_id, ?),
+ next_retry_at = ?, updated_at = ?
+ WHERE id = ? AND selected_account_id = ? AND state = 'uncertain'
+ AND (upstream_order_id IS NULL OR upstream_order_id = ?)
  AND EXISTS (SELECT 1 FROM supplier_accounts WHERE id = ? AND provider = 'dhru')`)
 		.bind(
+			notice.data.order_uuid,
 			now,
 			now,
 			notice.data.reference_id,
