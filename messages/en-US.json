@@ -746,6 +746,8 @@
 	"store_quantity_increase": "Increase quantity",
 	"store_price_free": "Free",
 	"store_order_access_promise": "Track delivery and view your purchase from the order",
+	"store_order_details_title": "Order details",
+	"store_order_details_description": "Enter the information needed to fulfill this service.",
 	"store_related_products": "You may also like",
 	"store_related_products_description": "Explore more options related to this product.",
 	"store_view_more_products": "View more",

@@ -746,6 +746,8 @@
 	"store_quantity_increase": "增加数量",
 	"store_price_free": "免费",
 	"store_order_access_promise": "购买后可在订单中查看交付进度和内容",
+	"store_order_details_title": "订单信息",
+	"store_order_details_description": "请填写完成该服务所需的信息。",
 	"store_related_products": "你可能还喜欢",
 	"store_related_products_description": "继续看看与当前商品相关的其他选择",
 	"store_view_more_products": "查看更多",

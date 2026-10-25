@@ -18,13 +18,11 @@ import {
 	useState,
 } from "react";
 import { toast } from "sonner";
-import { Checkbox as ProCheckbox } from "#/components/pro/base/fields/checkbox";
 import { PaymentProviderLogo } from "#/components/provider-logo";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { Skeleton } from "#/components/ui/skeleton";
-import { Switch } from "#/components/ui/switch";
 import { authClient } from "#/features/auth/auth-client";
 import { isInternalIdentityEmail } from "#/features/auth/identity-email";
 import {
@@ -39,6 +37,10 @@ import {
 	commerceSessionId,
 	trackCommerceEvent,
 } from "#/features/storefront/commerce-events";
+import {
+	ProductInputField,
+	type StorefrontInputValue,
+} from "#/features/storefront/components/product-input-field";
 import { writeGuestOrderEmail } from "#/features/storefront/order-access-storage";
 import {
 	getStoreCartFn,
@@ -53,7 +55,7 @@ import { getWalletFn } from "#/features/wallet/server/functions";
 import { m } from "#/paraglide/messages";
 import { getLocale } from "#/paraglide/runtime";
 
-type InputValue = string | number | boolean | string[];
+type InputValue = StorefrontInputValue;
 
 function CheckoutState({
 	action,
@@ -225,6 +227,25 @@ export function StorefrontCheckoutPage() {
 		)
 			setPaymentChannelId(first.id);
 	}, [channels.data, paymentChannelId]);
+	useEffect(() => {
+		// Carry input values entered on the product page into checkout.
+		const carried: Record<string, Record<string, InputValue>> = {};
+		for (const item of items) {
+			const raw = sessionStorage.getItem(
+				`gmshop-inputs:${item.sellableItemId}`,
+			);
+			if (!raw) continue;
+			try {
+				const parsed = JSON.parse(raw) as Record<string, InputValue>;
+				if (parsed && typeof parsed === "object")
+					carried[item.sellableItemId] = parsed;
+			} catch {
+				// Ignore malformed carry-over values.
+			}
+		}
+		if (Object.keys(carried).length)
+			setInputValues((current) => ({ ...carried, ...current }));
+	}, [items]);
 
 	const checkout = useMutation({
 		mutationFn: checkoutStoreOrderFn,
@@ -426,7 +447,8 @@ export function StorefrontCheckoutPage() {
 														item.deliveryComponentId && input.scope === "order",
 											)
 											.map((input) => (
-												<CheckoutInputField
+												<ProductInputField
+													idPrefix="checkout"
 													input={input}
 													key={input.id}
 													onChange={(value) =>
@@ -739,99 +761,6 @@ export function CheckoutLoadingSkeleton({
 				</aside>
 			</div>
 		</section>
-	);
-}
-
-type CheckoutInput = NonNullable<
-	Awaited<ReturnType<typeof getStorefrontProductFn>>
->["inputs"][number];
-
-function CheckoutInputField({
-	input,
-	value,
-	onChange,
-}: {
-	input: CheckoutInput;
-	value: InputValue | undefined;
-	onChange: (value: InputValue) => void;
-}) {
-	const id = `checkout-${input.id}`;
-	const hint = (
-		<span className="block text-muted-foreground text-xs">
-			{input.required ? m.store_input_required() : null}
-			{input.sensitive ? ` · ${m.store_input_sensitive()}` : null}
-		</span>
-	);
-	if (input.inputType === "boolean")
-		return (
-			<div className="flex items-center justify-between gap-4 rounded-lg border p-3">
-				<div>
-					<Label htmlFor={id}>{input.name}</Label>
-					{hint}
-				</div>
-				<Switch checked={Boolean(value)} id={id} onCheckedChange={onChange} />
-			</div>
-		);
-	if (input.inputType === "multiselect")
-		return (
-			<div className="grid gap-2">
-				<div>
-					<Label>{input.name}</Label>
-					{hint}
-				</div>
-				<ProCheckbox
-					id={id}
-					onChange={onChange}
-					options={input.options}
-					optionsClassName="grid gap-3 sm:grid-cols-2"
-					value={Array.isArray(value) ? value : []}
-				/>
-			</div>
-		);
-	if (input.inputType === "select")
-		return (
-			<div className="grid gap-2">
-				<div>
-					<Label htmlFor={id}>{input.name}</Label>
-					{hint}
-				</div>
-				<select
-					className="min-h-9 rounded-md border bg-transparent px-3 py-2 text-sm"
-					id={id}
-					onChange={(event) => onChange(event.currentTarget.value)}
-					required={input.required}
-					value={String(value ?? "")}
-				>
-					<option value="">{m.store_checkout_select_option()}</option>
-					{input.options.map((option) => (
-						<option key={option.value} value={option.value}>
-							{option.label}
-						</option>
-					))}
-				</select>
-			</div>
-		);
-	return (
-		<div className="grid gap-2">
-			<div>
-				<Label htmlFor={id}>{input.name}</Label>
-				{hint}
-			</div>
-			<Input
-				id={id}
-				onChange={(event) => onChange(event.target.value)}
-				required={input.required}
-				placeholder={input.exampleValue ?? undefined}
-				type={
-					input.sensitive
-						? "password"
-						: input.inputType === "number"
-							? "number"
-							: "text"
-				}
-				value={String(value ?? input.defaultValue ?? "")}
-			/>
-		</div>
 	);
 }
 

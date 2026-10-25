@@ -32,6 +32,10 @@ import {
 	StorefrontProductCard,
 	StorefrontProductCardSkeleton,
 } from "#/features/storefront/components/product-card";
+import {
+	ProductInputField,
+	type StorefrontInputValue,
+} from "#/features/storefront/components/product-input-field";
 import { purchaseMaximum } from "#/features/storefront/product-quantity";
 import {
 	getStorefrontProductFn,
@@ -70,6 +74,9 @@ export function StorefrontProductPage({ productId }: { productId: string }) {
 	const [selectedItemId, setSelectedItemId] = useState<string>();
 	const [selectedMediaId, setSelectedMediaId] = useState<string>();
 	const [quantity, setQuantity] = useState(1);
+	const [inputValues, setInputValues] = useState<
+		Record<string, Record<string, StorefrontInputValue>>
+	>({});
 	useEffect(() => {
 		if (product.data?.id)
 			trackCommerceEvent({
@@ -107,6 +114,13 @@ export function StorefrontProductPage({ productId }: { productId: string }) {
 	const selectedItem =
 		data.sellableItems.find((item) => item.id === selectedItemId) ??
 		data.sellableItems[0];
+	const selectedItemInputs = selectedItem
+		? data.inputs.filter(
+				(input) =>
+					input.deliveryComponentId === selectedItem.id &&
+					input.scope === "order",
+			)
+		: [];
 	const requiresSignIn =
 		selectedItem?.deliveryType === "automation" &&
 		!session.isPending &&
@@ -135,6 +149,11 @@ export function StorefrontProductPage({ productId }: { productId: string }) {
 		relatedProducts.data?.products
 			.filter((relatedProduct) => relatedProduct.id !== data.id)
 			.slice(0, 3) ?? [];
+	function persistItemInputs(itemId: string) {
+		const values = inputValues[itemId];
+		if (!values || !Object.keys(values).length) return;
+		sessionStorage.setItem(`gmshop-inputs:${itemId}`, JSON.stringify(values));
+	}
 	return (
 		<div className="container px-4 py-7 sm:py-10">
 			<Link
@@ -313,6 +332,33 @@ export function StorefrontProductPage({ productId }: { productId: string }) {
 							</PurchaseHighlight>
 						</div>
 					) : null}
+					{selectedItem && selectedItemInputs.length ? (
+						<div className="mt-7 grid gap-4">
+							<div>
+								<h2 className="font-medium">{m.store_order_details_title()}</h2>
+								<p className="mt-1 text-muted-foreground text-sm">
+									{m.store_order_details_description()}
+								</p>
+							</div>
+							{selectedItemInputs.map((input) => (
+								<ProductInputField
+									idPrefix="product"
+									input={input}
+									key={input.id}
+									onChange={(value) =>
+										setInputValues((current) => ({
+											...current,
+											[selectedItem.id]: {
+												...current[selectedItem.id],
+												[input.key]: value,
+											},
+										}))
+									}
+									value={inputValues[selectedItem.id]?.[input.key]}
+								/>
+							))}
+						</div>
+					) : null}
 					<div className="mt-7 grid gap-5">
 						{selectedItem &&
 							selectedItem.minimumQuantity !== selectedItem.maximumQuantity && (
@@ -384,6 +430,7 @@ export function StorefrontProductPage({ productId }: { productId: string }) {
 									disabled={!canPurchase}
 									onClick={() => {
 										if (!selectedItem) return;
+										persistItemInputs(selectedItem.id);
 										window.location.assign(checkoutPath);
 									}}
 								>
@@ -396,6 +443,7 @@ export function StorefrontProductPage({ productId }: { productId: string }) {
 								disabled={!canPurchase}
 								onClick={() => {
 									if (!selectedItem || maximumQuantity == null) return;
+									persistItemInputs(selectedItem.id);
 									const added = addLocalCartItem(
 										selectedItem.id,
 										quantity,
